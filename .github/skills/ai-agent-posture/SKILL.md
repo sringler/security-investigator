@@ -33,6 +33,20 @@ AI agents are autonomous or semi-autonomous applications that can access organiz
 - [Securing Copilot Studio agents with Microsoft Defender](https://learn.microsoft.com/en-us/defender-cloud-apps/ai-agent-protection)
 - [Real-time agent protection during runtime (Preview)](https://learn.microsoft.com/en-us/defender-cloud-apps/real-time-agent-protection-during-runtime)
 
+### 🔴 URL Registry — Canonical Links for Report Generation
+
+**MANDATORY:** When generating reports, copy URLs **verbatim** from this registry. NEVER construct, guess, or paraphrase a URL. If a URL is not in this registry, omit the hyperlink entirely and use plain text.
+
+| Label | Canonical URL |
+|-------|---------------|
+| `BLOG_RUNTIME_RISK` | `https://www.microsoft.com/en-us/security/blog/2026/01/23/runtime-risk-realtime-defense-securing-ai-agents/` |
+| `BLOG_AGENT_365` | `https://www.microsoft.com/en-us/microsoft-365/blog/2025/11/18/microsoft-agent-365-the-control-plane-for-ai-agents/` |
+| `DOCS_AIAGENTSINFO` | `https://learn.microsoft.com/en-us/defender-xdr/advanced-hunting-aiagentsinfo-table` |
+| `DOCS_AGENT_PROTECTION` | `https://learn.microsoft.com/en-us/defender-cloud-apps/ai-agent-protection` |
+| `DOCS_RUNTIME_PROTECTION` | `https://learn.microsoft.com/en-us/defender-cloud-apps/real-time-agent-protection-during-runtime` |
+
+**Usage in reports:** When referencing attack scenarios, link to `BLOG_RUNTIME_RISK`. When referencing Agent 365 governance, link to `BLOG_AGENT_365`. When referencing runtime protection, link to `DOCS_RUNTIME_PROTECTION`.
+
 ---
 
 ## Threat Landscape: Why AI Agent Posture Matters
@@ -554,6 +568,8 @@ Generate the markdown file AND provide an inline summary in chat.
 
 Render the following sections in order. Omit sections only if explicitly noted as conditional.
 
+> **🔴 URL Rule:** All hyperlinks in the report MUST be copied verbatim from the [URL Registry](#-url-registry--canonical-links-for-report-generation) above. Do NOT generate, recall from memory, or paraphrase any URL. If a needed URL is not in the registry, use plain text (no hyperlink).
+
 ````markdown
 # 🤖 AI Agent Security Posture Report
 
@@ -881,4 +897,5 @@ Before delivering the report, verify:
 - [ ] Knowledge sources include source type and URL/site reference
 - [ ] Creator governance includes naming hygiene and abandoned agent analysis
 - [ ] Recommendations are prioritized and evidence-based
+- [ ] All hyperlinks in the report are copied verbatim from the URL Registry — no fabricated or recalled-from-memory URLs
 - [ ] No PII from live environments in the SKILL.md file itself
