@@ -1,23 +1,26 @@
 ---
 name: data-security-analysis
-description: 'Use this skill when asked to analyze data security events, sensitive information type (SIT) access patterns, DLP policy matches, or Purview insider risk activity. Triggers on keywords like "data security", "sensitive information type", "SIT access", "who accessed sensitive data", "DLP events", "DataSecurityEvents", "EDM access", "exact data match", "credit card access", "sensitive file access", "insider risk activity", "Purview data security", "SIT breakdown", "classify access", or when investigating which users accessed documents containing specific sensitive information types. This skill queries DataSecurityEvents in Advanced Hunting to produce comprehensive SIT access analysis including volume breakdowns, user-level drill-downs, file inventories, action type distribution, DLP policy correlation, temporal patterns, and risk-ranked user summaries. Supports inline chat and markdown file output. Designed for large environments (100k+ users) with aggressive summarization and tiered drill-down.'
+description: 'Use this skill when asked to analyze data security events, sensitive information type (SIT) access patterns, sensitivity label access patterns, DLP policy matches, or Purview insider risk activity. Triggers on keywords like "data security", "sensitive information type", "SIT access", "who accessed sensitive data", "DLP events", "DataSecurityEvents", "EDM access", "exact data match", "credit card access", "sensitive file access", "insider risk activity", "Purview data security", "SIT breakdown", "classify access", "sensitivity label", "labeled documents", "label downgrade", "label change", "Copilot label exposure", or when investigating which users accessed documents containing specific sensitive information types or sensitivity labels. This skill queries DataSecurityEvents in Advanced Hunting to produce comprehensive SIT and sensitivity label access analysis including volume breakdowns, user-level drill-downs, file inventories, action type distribution, DLP policy correlation, label change tracking, Copilot label exposure, temporal patterns, and risk-ranked user summaries. Supports inline chat and markdown file output. Designed for large environments (100k+ users) with aggressive summarization and tiered drill-down.'
 ---
 
 # Data Security Events Analysis — Instructions
 
 ## Purpose
 
-This skill analyzes **DataSecurityEvents** (Microsoft Purview Insider Risk Management / DLP telemetry) to answer questions about **who accessed documents containing sensitive information types (SITs)** — including EDM (Exact Data Match), built-in SITs (credit cards, SSNs, etc.), and trainable classifiers.
+This skill analyzes **DataSecurityEvents** (Microsoft Purview Insider Risk Management / DLP telemetry) to answer questions about **who accessed documents containing sensitive information types (SITs) and/or sensitivity labels** — including EDM (Exact Data Match), built-in SITs (credit cards, SSNs, etc.), trainable classifiers, and Microsoft Purview sensitivity labels (Confidential, Highly Confidential, custom labels, etc.).
 
 **Primary Table:** `DataSecurityEvents` (Defender XDR Advanced Hunting)
 
 | Use Case | Example Question |
-|----------|-----------------|
+|----------|------------------|
 | SIT access audit | "Who accessed files with credit card numbers in the last 30 days?" |
 | EDM monitoring | "Show me all access to documents matching our EDM SIT" |
 | DLP event analysis | "What DLP policy matches occurred this week?" |
 | Insider risk triage | "Which users have the most sensitive data interactions?" |
 | SIT landscape overview | "What sensitive information types exist in our environment?" |
+| **Sensitivity label audit** | **"Who accessed Highly Confidential labeled documents?"** |
+| **Label change tracking** | **"Show me all label downgrades in the last 30 days"** |
+| **Copilot label exposure** | **"What labeled documents did Copilot access in risky interactions?"** |
 
 ---
 
@@ -25,13 +28,14 @@ This skill analyzes **DataSecurityEvents** (Microsoft Purview Insider Risk Manag
 
 1. **[Critical Workflow Rules](#-critical-workflow-rules---read-first-)** - Start here!
 2. **[SIT GUID Mapping Strategy](#sit-guid-mapping-strategy)** - How SIT GUIDs are resolved to names
-3. **[Output Modes](#output-modes)** - Inline chat vs. Markdown file
-4. **[Quick Start](#quick-start-tldr)** - 6-step execution pattern
-5. **[Execution Workflow](#execution-workflow)** - 4-phase analysis process
-6. **[Sample KQL Queries](#sample-kql-queries)** - Validated query patterns (Queries 1-10)
-7. **[Report Template](#report-template)** - Rendering rules (10 rules) + output format specification
-8. **[Known Pitfalls](#known-pitfalls)** - Table quirks and edge cases (18 entries)
-9. **[Error Handling](#error-handling)** - Troubleshooting guide
+3. **[Label GUID Mapping Strategy](#label-guid-mapping-strategy)** - How sensitivity label GUIDs are resolved to names
+4. **[Output Modes](#output-modes)** - Inline chat vs. Markdown file
+5. **[Quick Start](#quick-start-tldr)** - 7-step execution pattern
+6. **[Execution Workflow](#execution-workflow)** - 5-phase analysis process
+7. **[Sample KQL Queries](#sample-kql-queries)** - Validated query patterns (Queries 1-15)
+8. **[Report Template](#report-template)** - Rendering rules (12 rules) + output format specification
+9. **[Known Pitfalls](#known-pitfalls)** - Table quirks and edge cases (23 entries)
+10. **[Error Handling](#error-handling)** - Troubleshooting guide
 
 ---
 
@@ -47,6 +51,9 @@ This skill analyzes **DataSecurityEvents** (Microsoft Purview Insider Risk Manag
 6. **NEVER report SIT GUIDs without attempting name resolution** — use the mapping strategy below
 7. **ALWAYS ask for output mode** if not specified: inline chat or markdown file
 8. **Prerequisite:** DataSecurityEvents requires **Insider Risk Management opt-in** to share data with Defender XDR. If the table returns 0 rows or "table not found", inform the user of this requirement
+9. **ALWAYS run the Label Coverage Assessment** (Query 11 quick stats variant) during Phase 1 to determine if this environment has significant label usage. Adapt the report accordingly (see Rule 11)
+10. **NEVER report sensitivity label GUIDs without attempting name resolution** — use the label mapping strategy below
+11. **ALWAYS use `split()` on `SensitivityLabelId`** — this column can contain comma-separated GUIDs (one per sub-entity), not a single GUID
 
 ### ⛔ PROHIBITED ACTIONS
 
@@ -55,6 +62,7 @@ This skill analyzes **DataSecurityEvents** (Microsoft Purview Insider Risk Manag
 | Querying DataSecurityEvents via `mcp_sentinel-data_query_lake` | ❌ **PROHIBITED** — AH-only table |
 | Retrieving raw rows without `summarize` or `take` limit | ❌ **PROHIBITED** — table is massive |
 | Reporting SIT GUIDs without name resolution attempt | ❌ **PROHIBITED** |
+| Reporting sensitivity label GUIDs without name resolution attempt | ❌ **PROHIBITED** |
 | Running `mv-expand` on SensitiveInfoTypeInfo without pre-filtering with `has` | ❌ **PROHIBITED** — performance killer at scale |
 | Assuming `SensitiveInfoTypeInfo` is native dynamic | ❌ **PROHIBITED** — it's `Collection(String)`, requires double-parse |
 
@@ -136,6 +144,86 @@ GUIDs with `ClassifierType: "MLModel"` are **trainable classifiers** and may not
 
 ---
 
+## Label GUID Mapping Strategy
+
+### The Problem
+
+`DataSecurityEvents` has **4 label-related columns**, all containing sensitivity label **GUIDs** (not names):
+
+| Column | Type | Content |
+|--------|------|---------|
+| `SensitivityLabelId` | string | Label on the document at event time. Can contain **comma-separated GUIDs** (one per sub-entity) |
+| `PreviousSensitivityLabelId` | string | Previous label — only populated on label-change events (downgrade, removal) |
+| `SharepointSiteSensitivityLabelId` | string | Label on the SharePoint site (not the document) |
+| `RiskyAIUsageSensitivityLabelsInfo` | Collection(String) | Labels on resources Copilot accessed in risky AI events — JSON array of objects with `SubEntityId`, `SubEntityName`, `SensitivityLabelId` |
+
+### Resolution Strategy (3 tiers, in order)
+
+#### Tier 1: Embedded Well-Known Label Mapping (instant, no auth)
+
+The query library includes a `datatable` of **Microsoft default sensitivity labels** (the `defa4170-*` GUID family). All 12 default labels — including parent labels — use the deterministic pattern `defa4170-0d19-0005-XXXX-bc88714345d2`, confirmed across multiple tenants.
+
+> **⚠️ Important:** Microsoft does not publish default label GUIDs in official documentation. The GUID pattern is confirmed via `Get-Label` on default-configuration tenants. Older tenants may have **renamed** default labels (e.g., "Non-business" instead of "Personal", "Internal exception" instead of "Anyone (unrestricted)") or **replaced** default parent label GUIDs with random tenant-specific ones. Always validate with `Get-Label` (Tier 3) when accuracy matters.
+
+**Default Label GUID Pattern:** `defa4170-0d19-0005-XXXX-bc88714345d2` — complete mapping (12 labels, priority-ordered):
+
+| GUID suffix | Priority | Default Name | Parent |
+|-------------|----------|--------------|--------|
+| `0000` | 0 | Personal | (top-level) |
+| `0001` | 1 | Public | (top-level) |
+| `0002` | 2 | General | (top-level) |
+| `0003` | 3 | Anyone (unrestricted) | General |
+| `0004` | 4 | All Employees (unrestricted) | General |
+| `0005` | 5 | **Confidential** | (top-level, **parent**) |
+| `0006` | 6 | Anyone (unrestricted) | Confidential |
+| `0007` | 7 | All Employees | Confidential |
+| `0008` | 8 | Trusted People | Confidential |
+| `0009` | 9 | **Highly Confidential** | (top-level, **parent**) |
+| `000a` | 10 | All Employees | Highly Confidential |
+| `000b` | 11 | Specified People | Highly Confidential |
+
+> **Older/customized tenants:** Admins may have renamed default labels or deleted and recreated parent labels with random GUIDs. If `Get-Label` returns a different GUID for "Confidential" or "Highly Confidential" (not matching `defa4170-*`), the tenant has custom parent labels — add them via `config.json` (Tier 2).
+
+#### Tier 2: User-Provided Custom Label Mapping (config-driven)
+
+Custom labels (org-created) have random GUIDs. Users can provide a mapping in `config.json`:
+
+```json
+{
+  "label_mapping": {
+    "<custom-label-guid-1>": "Your Custom Label",
+    "<sub-label-guid>": "Sub-Label Name|Parent Label Name",
+    "<parent-label-guid>": "Confidential"
+  }
+}
+```
+
+**Value format:** `"LabelName"` for top-level labels, `"LabelName|ParentName"` (pipe-delimited) for sub-labels. When building the KQL `datatable`, split on `|` to populate `LabelName` and `LabelParent` columns.
+
+**Renamed defaults:** If a tenant has renamed default labels (e.g., `defa4170...0000` → "Non-business" instead of "Personal"), include the renamed GUID in `label_mapping` — Tier 2 entries override Tier 1 defaults.
+
+**At skill startup:** Check if `config.json` has a `label_mapping` section. If yes, merge it into the KQL `datatable` for name resolution. Tier 2 entries take precedence over Tier 1 defaults for the same GUID.
+
+#### Tier 3: PowerShell Resolution (optional, on-demand)
+
+If unresolved label GUIDs remain after Tier 1+2, **offer** to resolve them via PowerShell:
+
+> "I found N label GUIDs that aren't in the built-in mapping. Would you like me to resolve them via `Get-Label`? This requires an active Security & Compliance PowerShell session (`Connect-IPPSSession`)."
+
+If the user agrees:
+
+```powershell
+# Requires: Install-Module ExchangeOnlineManagement
+# Requires: Connect-IPPSSession -UserPrincipalName <UPN>
+Get-Label | Select-Object DisplayName, @{N='LabelGuid';E={$_.Guid.ToString()}}, ParentLabelDisplayName | Format-List
+```
+
+**After resolution:** Offer to save the mapping to `config.json` under `label_mapping` for future runs (same persistence pattern as SIT mapping).
+
+> **Key difference from SIT resolution:** Labels use `Get-Label` (not `Get-DlpSensitiveInformationType`). The cmdlet returns ALL labels at once — no need to query by individual GUID.
+
+---
+
 ## Output Modes
 
 **ASK the user which they prefer** if not explicitly specified. Both may be selected.
@@ -156,12 +244,13 @@ GUIDs with `ClassifierType: "MLModel"` are **trainable classifiers** and may not
 
 ## Quick Start (TL;DR)
 
-1. **Determine scope** → Tenant-wide overview? Specific SIT? Specific user? Time range?
-2. **Check config.json** → Look for `sit_mapping` section for custom SIT names
-3. **Run Phase 1** → Query 1 (SIT Discovery) to find active SITs and build mapping
+1. **Determine scope** → Tenant-wide overview? Specific SIT? Specific user? Specific label? Time range?
+2. **Check config.json** → Look for `sit_mapping` and `label_mapping` sections for custom name resolution
+3. **Run Phase 1** → Query 1 (SIT Discovery) + Label Coverage Assessment (quick stats variant) to determine environment maturity
 4. **Run Phase 2** → Queries 2-5 (breakdowns by action type, user, file, time)
 5. **Run Phase 3** → Queries 6-8 (DLP correlation, workload, SIT drill-down), Query 10b (file-based spikes)
-6. **Output Results** → Render in selected mode(s), offer PowerShell resolution for unknowns
+6. **Run Phase 4** → Queries 11-15 (label landscape, label-based user ranking, label downgrades, Copilot label exposure, label-only events) — **depth depends on label coverage** (see Rule 11)
+7. **Output Results** → Render in selected mode(s), offer PowerShell resolution for unknowns
 
 ---
 
@@ -169,13 +258,15 @@ GUIDs with `ClassifierType: "MLModel"` are **trainable classifiers** and may not
 
 ### Phase 1: Discovery & Mapping (always run first)
 
-**Goal:** Establish what SITs exist in the data, their volume, and resolve GUIDs to names.
+**Goal:** Establish what SITs and labels exist in the data, their volume, and resolve GUIDs to names.
 
 1. Run **Query 1** (SIT Discovery) — returns top SIT GUIDs with hit counts
-2. Apply Tier 1 mapping (embedded `datatable`) to resolve known GUIDs
-3. Check `config.json` for Tier 2 mapping to resolve custom GUIDs
-4. Flag any remaining unresolved GUIDs for optional Tier 3 (PowerShell)
-5. Present the SIT landscape to the user before proceeding
+2. Run **Label Coverage Assessment** (quick stats from Query 11 comment block) — returns label vs SIT coverage percentages
+3. Apply Tier 1 mapping (embedded `datatable`) to resolve known SIT and label GUIDs
+4. Check `config.json` for Tier 2 mapping (`sit_mapping` + `label_mapping`) to resolve custom GUIDs
+5. Flag any remaining unresolved GUIDs for optional Tier 3 (PowerShell)
+6. Present the SIT + label landscape to the user before proceeding
+7. **Determine label analysis depth** based on coverage (see Rule 11)
 
 ### Phase 2: Breakdown Analysis
 
@@ -199,7 +290,20 @@ Run these queries in parallel where possible:
 | **Specific user investigation** | Query 9 (Single-user SIT access profile) |
 | **Anomaly detection** | Query 10b (file-based spikes — PRIMARY), Query 10 (overall spikes — secondary, includes Copilot) |
 
-### Phase 4: Report Generation
+### Phase 4: Sensitivity Label Analysis (conditional on coverage)
+
+**Goal:** Analyze sensitivity label access patterns, label changes, and Copilot label exposure.
+
+**Run the Label Coverage Assessment first** (Phase 1, step 2). Then adapt depth per Rule 11:
+
+| Label Coverage | Analysis Depth | Run These |
+|---------------|----------------|----------|
+| **≥5% of events have labels** (label-mature environment) | **Full label analysis** — dedicated report sections | Query 11 (label landscape), Query 12 (label-based user ranking), Query 13 (label changes), Query 14 (Copilot label exposure), Query 15 (label-only events) |
+| **1-5% of events have labels** (emerging label environment) | **Summary label section** — condensed into one section | Query 11 (label landscape), Query 13 (label changes) |
+| **<1% of events have labels** (SIT-dominant environment) | **Brief note only** — mention label presence in Scope & Limitations | Label coverage stats from Phase 1 assessment only |
+| **User asks specifically about labels** | **Full label analysis** regardless of coverage percentage | All label queries (11-15) |
+
+### Phase 5: Report Generation
 
 Render findings using the Report Template below.
 
@@ -537,6 +641,212 @@ recent
 
 ---
 
+### Well-Known Label GUID Mapping (datatable)
+
+Use this `let` block as a prefix for label queries that need name resolution. It covers the Microsoft default sensitivity labels plus placeholder slots for custom labels from `config.json`.
+
+```kql
+// Microsoft default sensitivity label GUID mapping — all 12 labels
+// Confirmed via Get-Label on default-configuration tenants
+// Older tenants may have renamed labels or replaced parent GUIDs — validate with Get-Label if needed
+// Add custom labels from config.json label_mapping section
+let LabelMapping = datatable(LabelId: string, LabelName: string, LabelParent: string) [
+    // ── Microsoft Default Labels (defa4170-0d19-0005-XXXX-bc88714345d2 family) ──
+    // Priority 0-11, sequential GUID suffixes
+    "defa4170-0d19-0005-0000-bc88714345d2", "Personal", "",
+    "defa4170-0d19-0005-0001-bc88714345d2", "Public", "",
+    "defa4170-0d19-0005-0002-bc88714345d2", "General", "",
+    "defa4170-0d19-0005-0003-bc88714345d2", "Anyone (unrestricted)", "General",
+    "defa4170-0d19-0005-0004-bc88714345d2", "All Employees (unrestricted)", "General",
+    "defa4170-0d19-0005-0005-bc88714345d2", "Confidential", "",
+    "defa4170-0d19-0005-0006-bc88714345d2", "Anyone (unrestricted)", "Confidential",
+    "defa4170-0d19-0005-0007-bc88714345d2", "All Employees", "Confidential",
+    "defa4170-0d19-0005-0008-bc88714345d2", "Trusted People", "Confidential",
+    "defa4170-0d19-0005-0009-bc88714345d2", "Highly Confidential", "",
+    "defa4170-0d19-0005-000a-bc88714345d2", "All Employees", "Highly Confidential",
+    "defa4170-0d19-0005-000b-bc88714345d2", "Specified People", "Highly Confidential",
+    // ─── ADD CUSTOM LABELS FROM config.json label_mapping HERE ───
+    // Example: "<your-custom-label-guid>", "Your Custom Label", "Parent Label",
+    "END_MARKER", "END_MARKER", "END_MARKER"
+];
+```
+
+> **Instructions:** When building queries, read `config.json` for `label_mapping` entries and insert them into the `datatable` above, replacing the `END_MARKER` row. **Older/customized tenants:** If `Get-Label` shows parent labels (Confidential, Highly Confidential) with random GUIDs instead of `defa4170-*`, the admin has recreated them — add the tenant-specific GUIDs from `config.json` `label_mapping` or `Get-Label`. If resolved sub-label names differ from the datatable (e.g., "Non-business" vs "Personal"), prefer the `Get-Label` name for that tenant.
+
+---
+
+### Query 11: Label Coverage Overview — Sensitivity Label Landscape
+
+**Purpose:** Discover which sensitivity labels appear in the data, their volume, and resolve GUIDs to names. Also includes a quick stats variant for Phase 1 coverage assessment.
+
+**Quick Stats Variant (run first in Phase 1):**
+
+```kql
+// Label Coverage Assessment — run in Phase 1 to determine label analysis depth
+DataSecurityEvents
+| where Timestamp > ago(30d)
+| summarize
+    TotalEvents = count(),
+    WithSIT = countif(isnotempty(SensitiveInfoTypeInfo) and SensitiveInfoTypeInfo != "[]"),
+    WithLabel = countif(isnotempty(SensitivityLabelId)),
+    WithPrevLabel = countif(isnotempty(PreviousSensitivityLabelId)),
+    LabelOnly_NoSIT = countif(isnotempty(SensitivityLabelId) and (isempty(SensitiveInfoTypeInfo) or SensitiveInfoTypeInfo == "[]")),
+    SIT_WithLabel = countif(isnotempty(SensitivityLabelId) and isnotempty(SensitiveInfoTypeInfo) and SensitiveInfoTypeInfo != "[]")
+```
+
+**Full Label Landscape Query:**
+
+```kql
+// Query 11: Label Landscape — which sensitivity labels appear and how often
+// Prefix with LabelMapping datatable from above
+DataSecurityEvents
+| where Timestamp > ago(30d)
+| where isnotempty(SensitivityLabelId)
+| extend LabelIds = split(SensitivityLabelId, ",")
+| mv-expand LabelIdRaw = LabelIds
+| extend LabelId = tostring(trim(" ", tostring(LabelIdRaw)))
+| where isnotempty(LabelId)
+| lookup kind=leftouter LabelMapping on LabelId
+| extend LabelDisplay = iff(isempty(LabelName) or LabelName == "END_MARKER",
+    strcat("[Unknown] ", LabelId),
+    iff(isempty(LabelParent), LabelName, strcat(LabelParent, " / ", LabelName)))
+| summarize
+    EventCount = count(),
+    DistinctUsers = dcount(AccountUpn),
+    DistinctFiles = dcount(ObjectId),
+    ActionTypes = make_set(ActionType)
+    by LabelDisplay, LabelId
+| order by EventCount desc
+```
+
+**Post-processing:** Flag any `[Unknown]` GUIDs for Tier 2/3 resolution. The `LabelDisplay` column renders as "Parent / Child" for sub-labels (e.g., "Highly Confidential / Project Obsidian") and just the label name for top-level labels.
+
+---
+
+### Query 12: Top Users by Labeled Document Access (File-Based)
+
+**Purpose:** Risk-rank users by labeled document access volume, excluding Copilot/AI events. This is the label-dimension equivalent of Query 3.
+
+```kql
+// Query 12: Top users by labeled document access (file-based only)
+DataSecurityEvents
+| where Timestamp > ago(30d)
+| where isnotempty(SensitivityLabelId)
+| where ActionType !has "Copilot" and Workload !in ("Copilot", "ConnectedAIApp")
+| summarize
+    EventCount = count(),
+    DistinctLabels = dcount(SensitivityLabelId),
+    DistinctFiles = dcount(ObjectId),
+    ActionTypes = make_set(ActionType),
+    Workloads = make_set(Workload),
+    FirstSeen = min(Timestamp),
+    LastSeen = max(Timestamp)
+    by AccountUpn
+| order by EventCount desc
+| take 30
+```
+
+---
+
+### Query 13: Label Downgrade & Change Tracking
+
+**Purpose:** Find all events where a sensitivity label was downgraded, removed, or changed. Critical for detecting policy circumvention or insider risk.
+
+```kql
+// Query 13: Label downgrade/removal events — detect label circumvention
+// Prefix with LabelMapping datatable to resolve both current and previous label GUIDs
+DataSecurityEvents
+| where Timestamp > ago(30d)
+| where isnotempty(PreviousSensitivityLabelId)
+| extend CurrentLabelId = SensitivityLabelId
+| extend PrevLabelId = PreviousSensitivityLabelId
+| lookup kind=leftouter (LabelMapping | project LabelId, CurrentLabelName=LabelName, CurrentParent=LabelParent) on $left.CurrentLabelId == $right.LabelId
+| lookup kind=leftouter (LabelMapping | project LabelId, PrevLabelName=LabelName, PrevParent=LabelParent) on $left.PrevLabelId == $right.LabelId
+| extend CurrentDisplay = iff(isempty(CurrentLabelName), iff(isempty(CurrentLabelId), "[Removed]", strcat("[Unknown] ", CurrentLabelId)),
+    iff(isempty(CurrentParent), CurrentLabelName, strcat(CurrentParent, " / ", CurrentLabelName)))
+| extend PrevDisplay = iff(isempty(PrevLabelName), strcat("[Unknown] ", PrevLabelId),
+    iff(isempty(PrevParent), PrevLabelName, strcat(PrevParent, " / ", PrevLabelName)))
+| project Timestamp, ActionType, AccountUpn, ObjectId,
+    PreviousLabel = PrevDisplay, CurrentLabel = CurrentDisplay, Workload
+| order by Timestamp desc
+```
+
+**Key ActionTypes in label change events:**
+- `Label downgraded on a file` — label lowered (e.g., HC → Confidential)
+- `Label removed from a file` — label stripped entirely
+- `Label on file downgraded or removed, then file accessed by Copilot` — label reduced AND Copilot accessed the now-less-protected file
+
+---
+
+### Query 14: Copilot Label Exposure — Labeled Resources Accessed by Copilot
+
+**Purpose:** Identify which sensitivity-labeled documents Copilot accessed during risky AI interactions. This surfaces data exposure risk where Copilot may be surfacing Highly Confidential content.
+
+```kql
+// Query 14: Copilot label exposure — what labeled docs did Copilot access in risky interactions?
+// Prefix with LabelMapping datatable
+DataSecurityEvents
+| where Timestamp > ago(30d)
+| where isnotempty(RiskyAIUsageSensitivityLabelsInfo)
+| where tostring(RiskyAIUsageSensitivityLabelsInfo) !has "null"
+    or (tostring(RiskyAIUsageSensitivityLabelsInfo) has "null" and tostring(RiskyAIUsageSensitivityLabelsInfo) has "SensitivityLabelId")
+| mv-expand LabelEntry = parse_json(tostring(RiskyAIUsageSensitivityLabelsInfo))
+| extend LabelJson = parse_json(tostring(LabelEntry))
+| extend SubEntityName = tostring(LabelJson.SubEntityName)
+| extend LabelId = tostring(LabelJson.SensitivityLabelId)
+| where isnotempty(LabelId)
+| lookup kind=leftouter LabelMapping on LabelId
+| extend LabelDisplay = iff(isempty(LabelName) or LabelName == "END_MARKER",
+    strcat("[Unknown] ", LabelId),
+    iff(isempty(LabelParent), LabelName, strcat(LabelParent, " / ", LabelName)))
+| summarize
+    EventCount = count(),
+    DistinctUsers = dcount(AccountUpn),
+    SubEntities = make_set(SubEntityName),
+    ActionTypes = make_set(ActionType)
+    by LabelDisplay, LabelId
+| order by EventCount desc
+```
+
+**SubEntityName values:**
+- `ResponseAccessedResource` — a labeled document that Copilot cited in its response
+- `Response` — the Copilot response itself that was flagged
+
+---
+
+### Query 15: Label-Only Events — Events Triggered Purely by Label (No SIT Content Match)
+
+**Purpose:** Find events where the trigger was the sensitivity label alone, not SIT content detection. These represent label-aware DLP/IRM policy matches.
+
+```kql
+// Query 15: Label-only events — triggered by label, not SIT content
+// Prefix with LabelMapping datatable
+DataSecurityEvents
+| where Timestamp > ago(30d)
+| where isnotempty(SensitivityLabelId)
+| where isempty(SensitiveInfoTypeInfo) or SensitiveInfoTypeInfo == "[]"
+| extend LabelIds = split(SensitivityLabelId, ",")
+| mv-expand LabelIdRaw = LabelIds
+| extend LabelId = tostring(trim(" ", tostring(LabelIdRaw)))
+| where isnotempty(LabelId)
+| lookup kind=leftouter LabelMapping on LabelId
+| extend LabelDisplay = iff(isempty(LabelName) or LabelName == "END_MARKER",
+    strcat("[Unknown] ", LabelId),
+    iff(isempty(LabelParent), LabelName, strcat(LabelParent, " / ", LabelName)))
+| summarize
+    EventCount = count(),
+    DistinctUsers = dcount(AccountUpn),
+    DistinctFiles = dcount(ObjectId),
+    ActionTypes = make_set(ActionType),
+    Workloads = make_set(Workload)
+    by LabelDisplay, LabelId
+| order by EventCount desc
+```
+
+**Why this matters:** In label-mature environments, this query can surface significant activity that the SIT-only queries completely miss. If a document has a "Highly Confidential" label but no SIT content (e.g., manually labeled strategic document), it only appears here.
+
+---
+
 ## Report Template
 
 ### Report Rendering Rules
@@ -590,7 +900,8 @@ Markdown file reports MUST include a **Scope & Limitations** section immediately
 | Consideration | Detail |
 |--------------|--------|
 | **Data Source** | DataSecurityEvents (Defender XDR Advanced Hunting) — requires Insider Risk Management opt-in to share data with Defender XDR |
-| **Coverage** | SIT detections only — files with sensitivity labels but no SIT content match do NOT appear in this data |
+| **Coverage** | SIT detections + sensitivity label events — files with neither SIT content match nor sensitivity label do NOT appear in this data |
+| **Label Coverage** | X% of events have sensitivity labels — label analysis depth adjusted accordingly (see Rule 11) |
 | **Retention** | 30-day Advanced Hunting retention |
 | **ML Classifiers** | N trainable classifier GUIDs could not be resolved — see Unresolved SIT GUIDs section |
 | **Copilot Volume** | Copilot events represent X% of total volume and are separated from file-based analysis throughout this report |
@@ -656,6 +967,39 @@ When annotating spikes (🔴), clarify whether the spike is Copilot-driven or fi
 
 Use Query 5 (updated) which returns both columns.
 
+#### Rule 11: Adaptive Label Analysis Depth
+
+The depth of sensitivity label analysis MUST be determined dynamically based on the Phase 1 Label Coverage Assessment. This prevents wasting queries in SIT-dominant environments while ensuring full coverage in label-mature environments.
+
+| Label Coverage | Report Behavior |
+|---------------|----------------|
+| **≥5% labeled events** | Full dedicated label sections: Label Landscape table, Label-Based Top Users, Label Changes, Copilot Label Exposure, Label-Only Events. These render as peer sections alongside SIT analysis |
+| **1-5% labeled events** | Condensed "Sensitivity Labels" section: Label Landscape table + Label Changes only. Other label dimensions mentioned in summary notes |
+| **<1% labeled events** | Brief note in Scope & Limitations: "Sensitivity label data is sparse (<1% of events) — environment is SIT-dominant. N events had labels; see label coverage stats below." No dedicated label sections unless user asks |
+| **User explicitly asks about labels** | Full label sections regardless of coverage percentage |
+
+The Label Coverage Assessment also determines the overall report framing:
+- **SIT-dominant** (<5% labels): Report title/framing stays "SIT Access Analysis" with label addendum
+- **Dual signal** (5-50% labels): Report framing becomes "Data Security Analysis (SIT + Labels)"
+- **Label-dominant** (>50% labels): Report framing becomes "Data Security Analysis" with labels as primary signal and SIT as secondary
+
+⛔ **PROHIBITED:** Running all 5 label queries (11-15) when coverage is <1% and user didn't ask about labels — this wastes API calls and clutters the report.
+
+#### Rule 12: Label Display Format — Always Show Parent/Child Hierarchy
+
+When rendering sensitivity label names, ALWAYS show the parent-child hierarchy using "/" notation:
+
+| Raw Label | Correct Display | Incorrect Display |
+|-----------|----------------|------------------|
+| Sub-label under Highly Confidential | "Highly Confidential / All Employees" | "All Employees" |
+| Sub-label under Confidential | "Confidential / All employees" | "All employees" |
+| Top-level label | "General" | "General" (correct as-is) |
+| Unknown label | "[Unknown] abc12345..." | blank or omitted |
+
+This prevents ambiguity — "All Employees" exists under BOTH Confidential and Highly Confidential as different labels with different GUIDs.
+
+⛔ **PROHIBITED:** Displaying sub-label names without their parent (e.g., just "Specific people" — which parent?).
+
 ---
 
 ### Inline Chat Format
@@ -686,6 +1030,19 @@ Use Query 5 (updated) which returns both columns.
 | 1 | user@domain.com | 12,345 | 8 | 42 | 2026-03-16 |
 | ... | | | | | |
 
+### 🏷️ Sensitivity Label Landscape (if ≥1% coverage)
+| # | Label | GUID (short) | Events | Users | Files |
+|---|-------|-------------|--------|-------|-------|
+| 1 | Highly Confidential / All Employees | defa4170...000a | 62 | 9 | 31 |
+| 2 | General | defa4170...0002 | 55 | 12 | 32 |
+| ... | | | | | |
+
+### ⚠️ Label Changes (if any PreviousSensitivityLabelId events exist)
+| Timestamp | User | File | Previous Label | Current Label | Action |
+|-----------|------|------|---------------|--------------|--------|
+| 2026-03-11 | user@domain.com | doc.docx | HC / Project X | Confidential / All employees | Label downgraded |
+| ... | | | | | |
+
 ### ⚠️ SIT Access Spike Alerts
 | User | Baseline (daily avg) | Recent (daily avg) | Spike Ratio | Status |
 |------|---------------------|-------------------|-------------|--------|
@@ -704,6 +1061,7 @@ Same structure as inline, wrapped in proper markdown with:
 - Each section as H2/H3
 - **File-based user ranking** as the primary risk section (NOT the Copilot-dominated overall ranking)
 - DLP Policy Match section with DefaultRule explanation for empty PolicyName entries
+- **Sensitivity Label sections** (if coverage ≥1% or user requested): Label Landscape, Label-Based Top Users, Label Changes, Copilot Label Exposure
 - Code fences for any raw data samples
 - Save to: `reports/data-security/DataSecurity_Analysis_<scope>_YYYYMMDD_HHMMSS.md`
 
@@ -730,6 +1088,12 @@ Same structure as inline, wrapped in proper markdown with:
 | **Localized SIT names in CloudAppEvents** | CloudAppEvents `DLPRuleMatch` events include SIT names, but names appear **in the user's locale** (e.g., "የዱቤ ካርድ ቁጥር" instead of "Credit Card Number" for Amharic users). Same GUID can map to different name strings depending on locale | Always aggregate by **SIT GUID**, never by SIT name. Use the GUID-to-name mapping (Tier 1/2/3) for canonical English names. This applies when cross-referencing CloudAppEvents with DataSecurityEvents |
 | **Browsing events are not files — separate from Top Files** | ActionTypes like "Generative AI websites browsed" and "Gambling websites browsed" reference URLs, not files. They have no `ObjectId` file path — only a URL domain. Including them under "Top Files" is misleading | Render browsing/URL events in a separate subsection (e.g., "External / AI Service Access") below Top Files. Never mix URL-based events into the file ranking tables. Title the Top Files section accurately ("Top Files" not "Top Files & URLs") |
 | **Temporal spike annotations must reference known users** | When annotating daily spikes in the Temporal Pattern table (e.g., "🔴 Major spike — u625 SharePoint batch"), the attributed user MUST appear elsewhere in the report — in the File-Based Top Users table, a drill-down section, or at minimum a footnote. Referencing a user that exists nowhere else in the report violates the evidence-based analysis rule and creates an unverifiable claim | Before annotating a spike with a user attribution, verify the user appears in the Top Users ranking. If they don't make the top-10 but are the spike driver, either: (a) add them to the user table with a note "included due to temporal spike attribution", or (b) use a generic annotation ("🔴 Major spike — file-driven") without naming the user |
+| **`SensitivityLabelId` can contain comma-separated GUIDs** | When an event involves multiple sub-entities (e.g., Copilot accessing multiple labeled resources), the `SensitivityLabelId` column contains comma-separated GUIDs like `aaaa-...,aaaa-...,bbbb-...`. This is NOT a single GUID | Always `split(SensitivityLabelId, ",")` then `mv-expand` to handle multi-GUID values. Querying with `== "<GUID>"` will miss events; use `has "<GUID>"` for filtering or `split()` + `mv-expand` for enumeration |
+| **`RiskyAIUsageSensitivityLabelsInfo` is mostly `[null]`** | The column is populated on 90%+ of Copilot events, but almost all contain `[null]` (a JSON array with a literal null element). Only events where Copilot actually accessed labeled resources have real data | Filter with `tostring(RiskyAIUsageSensitivityLabelsInfo) !has "null"` to exclude the null-dominated rows. The `isnotempty()` check alone is insufficient — `[null]` passes it |
+| **Label GUIDs have no `ClassifierType` field** | Unlike SIT GUIDs which have `ClassifierType: "Content"` or `"MLModel"`, label GUIDs have no built-in type indicator. Resolution requires external lookup (datatable, config, or PowerShell `Get-Label`) | Use the Label GUID Mapping Strategy (3 tiers). Unknown labels display as `[Unknown] <GUID>` |
+| **Default label GUIDs are deterministic but not officially documented** | All 12 default labels (including parents) use `defa4170-0d19-0005-XXXX-bc88714345d2` with sequential suffixes `0000`–`000b` (confirmed via `Get-Label` on default-configuration tenants). However, Microsoft does not publish these GUIDs in official docs. **Older/customized tenants** may have: (a) renamed default labels (e.g., "Non-business" instead of "Personal"), (b) replaced parent label GUIDs with random tenant-specific ones, or (c) added custom sub-labels that break the sequential pattern | The embedded datatable includes all 12 confirmed default GUIDs. For tenants with custom parent GUIDs, add them via `config.json` `label_mapping`. If `Get-Label` returns different names for a `defa4170` GUID, prefer the `Get-Label` name for that tenant |
+| **`PreviousSensitivityLabelId` can equal `SensitivityLabelId`** | On "Label removed from a file" events, both fields may contain the same GUID (the label that was removed). The current label after removal may be empty | Check `ActionType` to distinguish: "Label downgraded" = actual label change; "Label removed" = label stripped (current may be empty); "Label on file downgraded or removed, then file accessed by Copilot" = compound event with Copilot exposure |
+| **Label-only events require label-aware DLP/IRM policies** | Events with labels but no SIT content (Query 15) only appear if a DLP or IRM policy explicitly targets sensitivity labels. Environments with no label-based policies will see zero label-only events even if documents are labeled | If Query 15 returns 0 results AND labels exist (Query 11 > 0), this indicates no label-based DLP/IRM policies are configured — mention this as a gap in the report |
 
 ---
 
@@ -742,6 +1106,8 @@ Same structure as inline, wrapped in proper markdown with:
 | `Failed to resolve column 'ObjectName'` | Schema changed or column renamed | Use `ObjectId` instead (confirmed available). Run `getschema` to verify current schema |
 | PowerShell `Get-DlpSensitiveInformationType` fails | Not connected to IPPS session | Run `Connect-IPPSSession -UserPrincipalName <UPN>` first |
 | `The term 'Get-DlpSensitiveInformationType' is not recognized` | Module not installed or IPPS session in different terminal | `Install-Module ExchangeOnlineManagement` then `Connect-IPPSSession` in the same terminal session |
+| `The term 'Get-Label' is not recognized` | Not connected to IPPS session or module not loaded | Same as above — `Connect-IPPSSession` provides both `Get-DlpSensitiveInformationType` and `Get-Label` |
+| Label GUIDs all show as `[Unknown]` | Default label datatable doesn't match target tenant (parent GUIDs vary) | Resolve via `Get-Label` and persist to `config.json` `label_mapping` |
 
 ---
 
@@ -766,6 +1132,14 @@ When the user specifically asks about **who opened/accessed/downloaded documents
 |------------|---------|
 | `Sensitive response received in Copilot` | Copilot surfaced content matching a SIT |
 | `Risky prompt entered in Copilot` | User prompt triggered risk detection |
+
+**Label-related ActionTypes** (sensitivity label events):
+
+| ActionType | Meaning |
+|------------|--------|
+| `Label downgraded on a file` | Sensitivity label lowered (e.g., HC → Confidential) |
+| `Label removed from a file` | Sensitivity label stripped entirely |
+| `Label on file downgraded or removed, then file accessed by Copilot` | Label reduced AND Copilot subsequently accessed the file |
 
 **DLP ActionTypes:**
 

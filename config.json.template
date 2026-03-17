@@ -16,5 +16,9 @@
   "sit_mapping": {
     "__comment": "Optional: SIT GUID-to-Name mapping for data-security-analysis skill. Resolved via Get-DlpSensitiveInformationType. Skill auto-populates after first PowerShell resolution.",
     "EXAMPLE-GUID-0000-0000-000000000000": "Example Custom SIT Name"
+  },
+  "label_mapping": {
+    "__comment": "Optional: Sensitivity Label GUID-to-Name mapping for data-security-analysis skill. Resolved via Get-Label. Microsoft default sub-labels (defa4170-*) are embedded in the skill; custom labels and tenant-specific parent label GUIDs go here.",
+    "EXAMPLE-GUID-0000-0000-000000000001": "Your Custom Label Name"
   }
 }
