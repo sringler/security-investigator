@@ -36,6 +36,7 @@ This skill analyzes **DataSecurityEvents** (Microsoft Purview Insider Risk Manag
 8. **[Report Template](#report-template)** - Rendering rules (15 rules) + output format specification
 9. **[Known Pitfalls](#known-pitfalls)** - Table quirks and edge cases (27 entries)
 10. **[Error Handling](#error-handling)** - Troubleshooting guide
+11. **[SVG Dashboard Generation](#svg-dashboard-generation)** - Visual dashboard from report data
 
 ---
 
@@ -1399,3 +1400,19 @@ When the user specifically asks about **who opened/accessed/downloaded documents
 |------------|---------|
 | `Generated High severity DLP alerts` | DLP policy triggered a high-severity alert |
 | `DLP Rule Matched` | DLP rule matched (may be combined with other types) |
+
+---
+
+## SVG Dashboard Generation
+
+After generating a Data Security Events analysis report (markdown file output), an SVG dashboard can be created using the shared SVG rendering skill.
+
+**Trigger:** User asks "generate an SVG dashboard from the report" or "visualize this report"
+
+**Workflow:**
+1. Read this skill's `svg-widgets.yaml` (widget manifest — defines layout, colors, field mapping)
+2. Read `.github/skills/svg-dashboard/SKILL.md` (rendering rules — component library, quality standards)
+3. Extract data from the completed report using `data_sources.field_mapping_notes`
+4. Render SVG → save as `{report_basename}_dashboard.svg` in the same directory
+
+**Layout:** 5 rows — title banner, KPI cards (events/users/files/file%/copilot%/label%), top SITs bar chart + workload donut, risk-ranked users table + file action bars, assessment banner + recommendations.

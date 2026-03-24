@@ -1,0 +1,249 @@
+# SVG Dashboard Widget Manifest — Data Security Events Analysis
+#
+# This file defines the layout and data mapping for generating an SVG dashboard
+# from a completed Data Security Events analysis report. It is consumed by the
+# shared SVG rendering skill at .github/skills/svg-dashboard/SKILL.md
+#
+# Usage:  After generating a DataSecurityEvents analysis report, ask:
+#           "Generate an SVG dashboard from the report"
+#         Copilot will read this manifest + the report data + the skill,
+#         then produce a single SVG file in reports/data-security/.
+#
+# Customization:  Tweak rows, reorder widgets, add/remove items, change colors.
+#                 The renderer adapts to whatever is defined here.
+
+# ─── Canvas ──────────────────────────────────────────────────────────────────
+canvas:
+  width: 1400
+  height: 1200          # 5 rows, 12 widgets — dense data security report
+  background: "#0d1117"
+  padding: 30
+  row_gap: 20
+  col_gap: 20
+  font_family: "Segoe UI, Roboto, sans-serif"
+
+# ─── Color Palette ───────────────────────────────────────────────────────────
+palette:
+  primary: "#409AE1"      # blue   — KPI highlights, primary data
+  secondary: "#b4a0ff"    # purple — secondary charts
+  accent: "#FFC83D"       # yellow — warnings, Copilot events
+  danger: "#EF6950"       # red    — critical findings, exfiltration
+  success: "#40C5AF"      # green  — clean/healthy metrics
+  muted: "#b2b2b2"        # gray   — labels, axis text
+  card_bg: "#161b22"      # dark card background
+  card_border: "#30363d"  # subtle border
+  text_primary: "#e6edf3"
+  text_secondary: "#b2b2b2"
+
+# ─── Risk Rating Colors ─────────────────────────────────────────────────────
+risk_rating_colors:
+  critical: "#EF6950"     # red    — confirmed exfiltration, compound risk
+  high: "#FF8C00"         # orange — mass USB copy, external domain + DLP
+  medium: "#FFC83D"       # yellow — high SIT diversity, AI browsing
+  low: "#40C5AF"          # green  — DLP-only, limited workloads
+
+# ─── Workload Colors ────────────────────────────────────────────────────────
+workload_colors:
+  copilot: "#FFC83D"        # yellow — dominant workload
+  endpoint: "#EF6950"       # red    — file-based risk
+  onedrive: "#409AE1"       # blue   — cloud storage
+  sharepoint: "#b4a0ff"     # purple — collaboration
+  teams: "#40C5AF"          # green  — messaging
+  exchange: "#FF8C00"       # orange — email
+  other: "#b2b2b2"          # gray   — ConnectedAIApp, DataInsights
+
+# ─── Row Definitions ─────────────────────────────────────────────────────────
+# TOKEN-BUDGET LAYOUT: 5 rows, 12 widgets, ~1200px height
+# Designed for data security analysis reports with SIT/label breakdown,
+# workload distribution, risk-ranked users, and recommendations.
+
+rows:
+
+  # ── ROW 1: Title Bar ────────────────────────────────────────────────────────
+  - id: title-bar
+    height: 70
+    widgets:
+      - type: title-banner
+        fields:
+          title: "Data Security Events Dashboard"
+          subtitle_fields:
+            - scope                   # e.g. "Tenant-wide — all users and workloads"
+            - time_range              # e.g. "2026-02-16 to 2026-03-18 (30 days)"
+            - generation_date         # e.g. "2026-03-18"
+        style:
+          title_size: 26
+          subtitle_size: 13
+          accent_color: palette.primary
+
+  # ── ROW 2: Key Metrics KPI Cards ───────────────────────────────────────────
+  - id: key-metrics
+    height: 150
+    widgets:
+      - type: kpi-card
+        label: "Total Events"
+        field: total_events                 # e.g. 810,259
+        unit: ""
+        icon: "activity"
+        highlight_color: palette.primary
+
+      - type: kpi-card
+        label: "Users"
+        field: total_users                  # e.g. 1,794
+        unit: "users"
+        icon: "users"
+        highlight_color: palette.primary
+
+      - type: kpi-card
+        label: "Files"
+        field: total_files                  # e.g. 14,860+
+        unit: "files"
+        icon: "file"
+        highlight_color: palette.secondary
+
+      - type: kpi-card
+        label: "File Events"
+        field: file_events_pct              # e.g. "5.7%"
+        unit: ""
+        icon: "hard-drive"
+        highlight_color: palette.danger
+
+      - type: kpi-card
+        label: "Copilot Events"
+        field: copilot_events_pct           # e.g. "94.3%"
+        unit: ""
+        icon: "bot"
+        highlight_color: palette.accent
+
+      - type: kpi-card
+        label: "Label Coverage"
+        field: label_coverage_pct           # e.g. "2.0%"
+        unit: ""
+        icon: "tag"
+        highlight_color: palette.muted
+
+  # ── ROW 3: Top SITs + Workload Breakdown ───────────────────────────────────
+  - id: sits-and-workloads
+    height: 300
+    widgets:
+      - type: horizontal-bar-chart
+        title: "Top Sensitive Information Types"
+        field: top_sits                     # array of {name, events}
+        width_pct: 55
+        bar_height: 28
+        max_items: 8
+        value_suffix: ""
+        label_field: "name"
+        value_field: "events"
+        color: palette.primary
+
+      - type: donut-chart
+        title: "Workload Distribution"
+        field: workload_breakdown           # array of {workload, events}
+        width_pct: 45
+        show_center_total: true
+        segment_colors:
+          "Copilot": workload_colors.copilot
+          "Endpoint": workload_colors.endpoint
+          "OneDrive": workload_colors.onedrive
+          "SharePoint": workload_colors.sharepoint
+          "MicrosoftTeams": workload_colors.teams
+          "Exchange": workload_colors.exchange
+          "Other": workload_colors.other
+
+  # ── ROW 4: Risk-Ranked Users + Action Type Breakdown ───────────────────────
+  - id: users-and-actions
+    height: 300
+    widgets:
+      - type: table-widget
+        title: "File-Based Top Risk Users"
+        field: top_risk_users               # array of {user, risk, events, files, actions}
+        width_pct: 55
+        columns:
+          - { header: "User",    field: "user",   width: 25 }
+          - { header: "Risk",    field: "risk",   width: 15, badge: true }
+          - { header: "Events",  field: "events", width: 15 }
+          - { header: "Files",   field: "files",  width: 15 }
+          - { header: "Key Actions", field: "actions", width: 30 }
+        max_items: 6
+        badge_colors:
+          "Critical": "#EF6950"
+          "High": "#FF8C00"
+          "Medium": "#FFC83D"
+          "Low": "#40C5AF"
+
+      - type: horizontal-bar-chart
+        title: "File Action Types"
+        field: file_action_types            # array of {action, events}
+        width_pct: 45
+        bar_height: 26
+        max_items: 8
+        value_suffix: ""
+        label_field: "action"
+        value_field: "events"
+        bar_color_map:
+          "Files collected and exfiltrated": "#EF6950"
+          "File copied to Removable media": "#FF8C00"
+          "File deleted on endpoint": "#FF8C00"
+          "Generated High severity DLP alerts": "#FFC83D"
+        color: palette.primary              # default for unmapped actions
+
+  # ── ROW 5: Assessment + Recommendations ────────────────────────────────────
+  - id: assessment-and-recs
+    height: 220
+    widgets:
+      - type: assessment-banner
+        title: "Security Assessment"
+        field: overall_assessment            # e.g. {level: "critical", detail: "..."}
+        width_pct: 40
+        severity_field: "level"              # "critical" | "high" | "medium" | "low" | "informational"
+        detail_field: "detail"               # 1-2 sentence supporting text
+        key_risks_field: "key_risks"         # array of strings — highlighted in danger color
+        severity_colors:
+          critical: palette.danger
+          high: "#FF8C00"
+          medium: palette.accent
+          low: palette.success
+          informational: palette.primary
+
+      - type: recommendation-cards
+        title: "Top Recommendations"
+        field: recommendations               # array of {priority, text}
+        width_pct: 60
+        max_items: 3
+        priority_colors:
+          critical: palette.danger
+          high: "#FF8C00"
+          medium: palette.accent
+          low: palette.primary
+          info: palette.muted
+
+# ─── Data Source Mapping ─────────────────────────────────────────────────────
+# Maps each widget field to the report section where the data lives.
+# The SVG renderer extracts these values from the completed report markdown.
+data_sources:
+  report_file: "reports/data-security/DataSecurity_Analysis_*.md"
+  field_mapping_notes: |
+    # Row 1 — Title
+    scope: "Report header → Scope field (e.g. 'Tenant-wide — all users and workloads')"
+    time_range: "Report header → Time Range field (e.g. '2026-02-16 to 2026-03-18 (30 days)')"
+    generation_date: "Report header → Generated field"
+
+    # Row 2 — KPI Cards
+    total_events: "Executive Summary → total events count"
+    total_users: "Executive Summary → distinct users count"
+    total_files: "Executive Summary → distinct files count"
+    file_events_pct: "Action Type Breakdown → File-Based Operations percentage"
+    copilot_events_pct: "Action Type Breakdown → Copilot Interactions percentage"
+    label_coverage_pct: "Sensitivity Labels section → label coverage percentage"
+
+    # Row 3 — SITs + Workloads
+    top_sits: "SIT Landscape → Custom/Organization SITs + Built-in Microsoft SITs tables, sorted by Events desc, top 8"
+    workload_breakdown: "Workload Breakdown table → workload name and events. Combine ConnectedAIApp + DataInsights into 'Other'"
+
+    # Row 4 — Users + Actions
+    top_risk_users: "File-Based Top Users (Risk-Ranked) table → user (short form), risk level, file events, files, key action types (abbreviated)"
+    file_action_types: "Action Type Breakdown → File-Based Operations table → action type and event count, top 8"
+
+    # Row 5 — Assessment + Recommendations
+    overall_assessment: "Derive from Executive Summary risk findings. Level = highest risk in report (critical if exfiltration confirmed). Key risks from Critical/High findings. Detail = 1-2 sentence synthesis"
+    recommendations: "Recommendations table → top 3 items with priority mapped from emoji (🔴=critical/high, 🟠=medium, 🟡=low, 🔵=info)"
