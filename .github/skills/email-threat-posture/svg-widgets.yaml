@@ -1,0 +1,288 @@
+# SVG Dashboard Widget Manifest — Email Threat Protection Report
+#
+# This file defines the layout and data mapping for generating an SVG dashboard
+# from a completed Email Threat Protection Posture report. It is consumed by the
+# shared SVG rendering skill at .github/skills/svg-dashboard/SKILL.md
+#
+# Usage:  After generating an email threat posture report, ask:
+#           "Generate an SVG dashboard from the report"
+#         Copilot will read this manifest + the report data + the skill,
+#         then produce a single SVG file in reports/email-threat-posture/.
+#
+# Customization:  Tweak rows, reorder widgets, add/remove items, change colors.
+#                 The renderer adapts to whatever is defined here.
+
+# ─── Canvas ──────────────────────────────────────────────────────────────────
+canvas:
+  width: 1400
+  height: 1400          # 7 rows — comprehensive email posture layout with incident data
+  background: "#1b1a19"
+  padding: 40
+  row_gap: 24
+  col_gap: 20
+  font_family: "Segoe UI, Roboto, sans-serif"
+
+# ─── Color Palette (SharePoint Dark Theme) ───────────────────────────────────
+palette:
+  primary: "#0078d4"        # Microsoft Blue — primary KPI highlights
+  secondary: "#2b88d8"      # lighter blue — secondary data
+  accent: "#00bcf2"         # cyan — informational highlights
+  danger: "#d13438"         # red — threats, phishing
+  success: "#107c10"        # green — clean, passed, healthy
+  warning: "#ff8c00"        # orange — spam, moderate risk
+  muted: "#a19f9d"          # gray — labels, secondary text
+  card_bg: "#252423"        # dark card background
+  card_border: "#3b3a39"    # subtle border / grid lines
+  text_primary: "#f3f2f1"
+  text_secondary: "#a19f9d"
+  grid_line: "#3b3a39"
+
+# ─── Score Rating Colors ────────────────────────────────────────────────────
+score_rating_colors:
+  strong: "#107c10"          # green  — 85–100
+  good: "#ff8c00"            # orange — 65–84
+  needs_improvement: "#ff8c00" # orange — 45–64
+  critical: "#d13438"        # red    — 0–44
+
+# ─── Dimension Colors (Email Protection Score — 5 dimensions) ───────────────
+dimension_colors:
+  threat_block_rate: "#0078d4"     # blue
+  email_authentication: "#107c10"  # green
+  zap_effectiveness: "#00bcf2"     # cyan
+  safe_links: "#2b88d8"           # light blue
+  phishing_delivery: "#d13438"    # red
+
+# ─── Row Definitions ─────────────────────────────────────────────────────────
+
+rows:
+
+  # ── ROW 1: Title Banner ─────────────────────────────────────────────────────
+  - id: title-banner
+    height: 72
+    widgets:
+      - type: title-banner
+        fields:
+          title: "Email Threat Protection Dashboard"
+          subtitle_fields:
+            - analysis_period          # e.g. "March 14–20, 2026"
+            - protected_mailboxes      # e.g. "298 Protected Mailboxes"
+            - data_source              # "Microsoft Defender for Office 365"
+        style:
+          title_size: 22
+          subtitle_size: 12
+          accent_color: palette.primary
+
+  # ── ROW 2: KPI Cards ───────────────────────────────────────────────────────
+  - id: kpi-cards
+    height: 108
+    widgets:
+      - type: kpi-card
+        label: "Total Inbound Emails"
+        field: total_inbound
+        unit: ""
+        highlight_color: palette.primary
+        sub_field: sender_recipient_note    # e.g. "35 senders → 298 recipients"
+
+      - type: kpi-card
+        label: "Clean Email Rate"
+        field: clean_rate_pct
+        unit: "%"
+        highlight_color: palette.success
+        sub_field: clean_rate_detail        # e.g. "5,851 of 5,864 clean"
+
+      - type: kpi-card
+        label: "Threats Detected"
+        field: total_threats
+        unit: ""
+        highlight_color: palette.warning
+        sub_field: threat_breakdown         # e.g. "2 phish · 11 spam · 0 malware"
+
+      - type: kpi-card
+        label: "Malware Delivered"
+        field: malware_delivered
+        unit: ""
+        highlight_color: palette.success
+        sub_field: malware_note             # e.g. "All malware blocked at gate"
+
+      - type: kpi-card
+        label: "Threat ZAP Actions"
+        field: threat_zap_count              # PhishZAP + MalwareZAP + SpamZAP only (NOT TotalActions)
+        unit: ""
+        highlight_color: palette.accent
+        sub_field: zap_breakdown            # e.g. "458 phish + 202 malware + 14 spam"
+
+  # ── ROW 3: Daily Volume Line Chart ─────────────────────────────────────────
+  - id: daily-volume-chart
+    height: 222
+    widgets:
+      - type: line-chart
+        title: "Daily Inbound Email Volume"
+        field: daily_inbound_volume         # array of {day, inbound}
+        width_pct: 100
+        x_field: "day"
+        y_field: "inbound"
+        line_color: palette.primary
+        fill_opacity: 0.15
+        annotations:
+          - type: peak                      # mark the highest day
+        show_data_labels: true              # show values on key points (first, peak, last)
+
+  # ── ROW 4: Threat Donut + Detection Methods Bar Chart ──────────────────────
+  - id: threat-and-detection
+    height: 250
+    widgets:
+      - type: donut-chart
+        title: "Threat Composition"
+        field: threat_composition           # array of {category, count, color}
+        width_pct: 33
+        show_center_total: true
+        center_label: "THREATS"
+        segment_colors:
+          Spam: palette.warning
+          Phish: palette.danger
+          Malware: "#8b0000"
+        legend_position: "right"
+
+      - type: horizontal-bar-chart
+        title: "Detection Methods"
+        field: detection_methods             # array of {method, count}
+        width_pct: 67
+        bar_height: 18
+        max_items: 6
+        label_field: "method"
+        value_field: "count"
+        bar_color_map:
+          default: palette.primary
+          "Phish:*": palette.danger
+          "Spam:*": palette.warning
+          "Malware:*": "#8b0000"
+
+  # ── ROW 5: Email Auth Progress Bars + ZAP / Safe Links Card ────────────────
+  - id: auth-and-remediation
+    height: 185
+    widgets:
+      - type: progress-bar
+        title: "Email Authentication Pass Rates"
+        field: auth_pass_rates              # array of {protocol, pass_pct, pass_count, total}
+        width_pct: 50
+        protocols:
+          - { label: "SPF",      bar_color: palette.success }
+          - { label: "DMARC",    bar_color: palette.success }
+          - { label: "CompAuth", bar_color: palette.success }
+          - { label: "DKIM",     bar_color: palette.warning }
+        thresholds:
+          - { at: 95, color: palette.success }
+          - { at: 80, color: palette.warning }
+          - { at: 0,  color: palette.danger }
+        show_count: true                    # show "(N)" after percentage
+
+      - type: kpi-card
+        title: "Post-Delivery Remediation"
+        field: zap_summary                  # composite: ZAP count, success, errors
+        width_pct: 50
+        sub_widgets:
+          - { label: "ZAP Remediations", field: "zap_count",     color: palette.accent }
+          - { label: "Successful Actions", field: "zap_success",  color: palette.success }
+          - { label: "Failed Actions",    field: "zap_errors",    color: palette.danger }
+        safe_links_row:
+          - { label: "clicks scanned",    field: "sl_total",      color: palette.accent }
+          - { label: "blocked",            field: "sl_blocked",    color: palette.success }
+          - { label: "phish clicks",       field: "sl_phish",     color: palette.success }
+          - { label: "users protected",    field: "sl_users",     color: palette.primary }
+
+  # ── ROW 6: MDO Security Incidents ──────────────────────────────────────────
+  - id: mdo-incidents
+    height: 185
+    widgets:
+      - type: horizontal-bar-chart
+        title: "MDO Incidents by Type"
+        field: mdo_incident_types          # array of {alert_name, count}
+        width_pct: 60
+        bar_height: 18
+        max_items: 6
+        label_field: "alert_name"
+        value_field: "count"
+        bar_color_map:
+          default: palette.primary
+          "*malicious URL*": palette.danger
+          "*phish*": palette.danger
+          "*malware*": "#8b0000"
+          "*campaign*": palette.warning
+
+      - type: kpi-card
+        title: "Incident Summary"
+        field: mdo_incident_summary
+        width_pct: 40
+        sub_widgets:
+          - { label: "Total MDO Incidents",  field: "total_incidents",  color: palette.primary }
+          - { label: "High Severity",        field: "high_count",       color: palette.danger }
+          - { label: "Open (Unresolved)",    field: "open_count",       color: palette.warning }
+          - { label: "True Positives",       field: "tp_count",         color: palette.success }
+
+  # ── ROW 7: Assessment Banner ───────────────────────────────────────────────
+  - id: assessment-banner
+    height: 168
+    widgets:
+      - type: assessment-banner
+        title: "Overall Assessment"
+        field: overall_assessment            # e.g. "STRONG Email Protection Posture"
+        width_pct: 100
+        severity_field: "level"
+        detail_sections:
+          strengths:
+            title: "KEY STRENGTHS"
+            max_items: 4
+            bullet_color: palette.success
+          monitors:
+            title: "AREAS TO MONITOR"
+            max_items: 4
+            bullet_color: palette.warning
+        severity_colors:
+          strong: palette.success
+          good: palette.primary
+          needs_improvement: palette.warning
+          critical: palette.danger
+
+# ─── Data Source Mapping ─────────────────────────────────────────────────────
+data_sources:
+  report_file: "reports/email-threat-posture/Email_Threat_Protection_Report_*.md"
+  field_mapping_notes: |
+    # Row 1 — Title
+    analysis_period: "Report header → Analysis Period field"
+    protected_mailboxes: "Report header → Protected Mailboxes field"
+    data_source: "Report header → Data Source field"
+
+    # Row 2 — KPI Cards
+    total_inbound: "Key Metrics → Total Inbound Emails"
+    clean_rate_pct: "Key Metrics → Clean Email Rate (percentage number)"
+    clean_rate_detail: "Key Metrics → Clean Email Rate (raw counts in parentheses)"
+    sender_recipient_note: "Key Metrics → Distinct Senders + Protected Mailboxes formatted as 'N senders → N recipients'"
+    total_threats: "Key Metrics → Threats Detected (total count)"
+    threat_breakdown: "Key Metrics → Threats Detected (parenthetical breakdown: Phish: N, Spam: N, Malware: N)"
+    malware_delivered: "Delivery Disposition → count of Malware with LatestDeliveryAction == 'Delivered'"
+    malware_note: "Contextual note — 'All malware blocked at gate' if 0, otherwise count + warning"
+    threat_zap_count: "Post-Delivery Remediation → ThreatZAPTotal (PhishZAP + MalwareZAP + SpamZAP only — NOT TotalActions)"
+    zap_breakdown: "Post-Delivery Remediation → 'N phish + N malware + N spam'
+
+    # Row 3 — Line Chart
+    daily_inbound_volume: "Mail Flow Overview → Daily Volume Trend table (Day, Inbound columns)"
+
+    # Row 4 — Threat Donut + Detection Methods
+    threat_composition: "Threat Composition → Threat Categories table (Category, Count)"
+    detection_methods: "Threat Composition → Detection Methods table (Method, Count)"
+
+    # Row 5 — Auth + Remediation
+    auth_pass_rates: "Email Authentication table (Protocol, Pass Rate %, Pass Count, Fail Count)"
+    zap_summary: "Post-Delivery Remediation section — Threat ZAP count (not TotalActions), success rate, errors"
+    safe_links_row: "Safe Links Protection section — clicks scanned, blocked, phish, users"
+
+    # Row 6 — MDO Incidents
+    total_incidents: "MDO Incidents → Incident Summary table → sum of Total column"
+    high_count: "MDO Incidents → Incident Summary table → High severity Total"
+    open_count: "MDO Incidents → Incident Summary table → sum of Open column"
+    tp_count: "MDO Incidents → Incident Summary table → sum of True Positive column"
+    mdo_incident_types: "MDO Incidents → Top MDO Incident Types table (Alert Name, Incidents columns)"
+    mdo_incident_summary: "MDO Incidents → Incident Summary severity × status aggregation"
+
+    # Row 7 — Assessment
+    overall_assessment: "Security Assessment table + Recommendations section"
