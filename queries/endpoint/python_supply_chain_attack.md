@@ -1194,7 +1194,7 @@ If any of the above queries return positive results:
 
 ---
 
-## Mitigations & Customer Guidance
+## Mitigations & Guidance
 
 ### 1. MCP Architecture: Vendor-Hosted vs Self-Built
 
@@ -1205,12 +1205,14 @@ The litellm attack directly illustrates the risk of self-hosted MCP servers with
 | PyPI supply chain | 🔴 Full exposure — you own the dependency tree | ✅ Not applicable — no user-managed Python |
 | Dependency management | 🔴 Your team patches, pins, audits | ✅ Vendor owns patching and SBOMs |
 | .pth startup hooks | 🔴 Python runtime risk on every install | ✅ No local Python interpreter needed |
-| Credential exposure | 🟠 Env vars, files on build host | 🟢 Managed identity / OAuth flows |
+| Credential exposure | � API keys, secrets in `.env` files and env vars — prime exfil targets | 🟢 OAuth / Entra ID auth — no stored credentials on disk |
 | Patching cadence | 🟠 Depends on your CI/CD | ✅ Vendor SLA |
 | Incident response | 🔴 Your team scopes and remediates | 🟢 Shared responsibility with vendor |
 | Customizability | 🟢 Fully customizable | 🟡 Limited to vendor's API surface |
 
 **Key point:** Microsoft-hosted MCP servers (Sentinel, Graph, Azure, KQL Search, Learn) have zero user-managed Python dependencies. You consume a service endpoint — Microsoft owns the supply chain. For most security tooling use cases, this eliminates an entire threat class without meaningful functionality loss.
+
+**Authentication model:** Microsoft-hosted MCP servers authenticate via OAuth / Entra ID — there are no API keys, secrets, or tokens stored on disk. Compare this to self-built MCP servers that typically require stored credentials (API keys in `.env` files, service account JSON files, connection strings in environment variables) — exactly the artifacts this malware was designed to harvest. With OAuth, there is nothing for a credential stealer to exfiltrate from the local filesystem.
 
 ### 2. Dependency Pinning and Lock Files
 
