@@ -2,8 +2,8 @@
 
 **Created:** 2026-03-25  
 **Platform:** Both  
-**Tables:** DeviceProcessEvents, DeviceFileEvents, DeviceNetworkEvents, ASimDnsActivityLogs, DeviceEvents, DeviceRegistryEvents, CloudAppEvents  
-**Keywords:** litellm, pypi, pip install, supply chain, credential stealer, python package, site-packages, .pth file, secret exfiltration, environment variable harvesting, cloud credential theft, models.litellm.cloud, checkmarx.zone, trivy, CI/CD compromise, sysmon.py, node-setup, kubernetes lateral movement, fork bomb, uvx, MCP server, transitive dependency  
+**Tables:** DeviceProcessEvents, DeviceFileEvents, DeviceNetworkEvents, ASimDnsActivityLogs, DeviceEvents, DeviceRegistryEvents, CloudAppEvents, DeviceTvmSoftwareInventory  
+**Keywords:** litellm, pypi, pip install, supply chain, credential stealer, python package, site-packages, .pth file, secret exfiltration, environment variable harvesting, cloud credential theft, models.litellm.cloud, checkmarx.zone, trivy, CI/CD compromise, sysmon.py, node-setup, kubernetes lateral movement, fork bomb, uvx, MCP server, transitive dependency, TeamPCP, aquasecurtiy.org, GitHub Actions tag poisoning, mutable tags  
 **MITRE:** T1195.002, T1059.006, T1027, T1555, T1552.001, T1041, T1071.001, T1547.004, T1082, T1083, T1005, T1543.002, T1610, T1552.007, T1499.004  
 **Timeframe:** Last 30 days (configurable)
 
@@ -14,17 +14,23 @@
 This hunting campaign targets TTPs from the **LiteLLM PyPI supply chain compromise** disclosed March 24, 2026:  
 **[Security Update: Suspected Supply Chain Incident](https://docs.litellm.ai/blog/security-update-march-2026)**
 
-Related upstream compromise: **[Trivy Supply Chain Attack](https://www.aquasec.com/blog/trivy-supply-chain-attack-what-you-need-to-know/)**
+LiteLLM was one of several downstream targets in a broader supply chain campaign attributed to threat actor **TeamPCP**. The campaign originated with the **Trivy compromise** (March 19, 2026), where attackers leveraged access from a prior, incompletely remediated incident to poison Trivy's binary releases, GitHub Actions (`trivy-action`, `setup-trivy`), and subsequently expanded to **Checkmarx KICS** and **LiteLLM**. All three campaigns share the same credential-stealing payload architecture (AES-256-CBC + RSA-4096 → `tpcp.tar.gz` exfil) and overlapping C2 infrastructure.
+
+**Related intelligence:**
+- **[Microsoft: Detecting, Investigating, and Defending Against the Trivy Supply Chain Compromise](https://www.microsoft.com/en-us/security/blog/2026/03/24/detecting-investigating-defending-against-trivy-supply-chain-compromise/)** — Microsoft Defender coverage, Advanced Hunting queries, and mitigation guidance
+- **[Aqua Security: Trivy Supply Chain Attack](https://www.aquasec.com/blog/trivy-supply-chain-attack-what-you-need-to-know/)** — Aqua's own post-mortem and remediation timeline
 
 ### Threat Summary
 
 | Aspect | Detail |
 |--------|--------|
+| **Threat Actor** | **TeamPCP** — attributed by Microsoft Defender Security Research. Same actor behind Trivy (March 19) and Checkmarx KICS compromises |
+| **Campaign Chain** | Trivy binary + GitHub Actions (March 19) → Checkmarx KICS → LiteLLM PyPI (March 24). Shared payload architecture and overlapping C2 infrastructure across all three |
 | **Affected Packages** | `litellm==1.82.7`, `litellm==1.82.8` (removed from PyPI) |
 | **Compromise Window** | March 24, 2026, 10:52–~12:00 UTC (v1.82.8 uploaded at 10:52, PyPI quarantined within ~46 minutes, 46,996 downloads) |
 | **Downloads During Window** | 46,996 (32,464 for v1.82.8, 14,532 for v1.82.7) |
 | **Dependent Packages** | 2,337 on PyPI — 88% had version specs allowing compromised versions |
-| **Attack Vector** | Compromised maintainer PyPI account (via Checkmarx/Trivy CI/CD compromise). No GitHub tag for v1.82.7 or v1.82.8 — published directly to PyPI bypassing normal release process |
+| **Attack Vector** | Compromised maintainer PyPI account (via Checkmarx/Trivy CI/CD compromise chain). No GitHub tag for v1.82.7 or v1.82.8 — published directly to PyPI bypassing normal release process. Trivy was compromised via Git tag abuse: attackers force-pushed 76 of 77 tags in `trivy-action` and all 7 in `setup-trivy` to malicious commits, plus published infected binary v0.69.4 |
 | **Patient Zero Infection Chain** | Cursor auto-update (10:59) → extension host restart → MCP server reconnection → `uvx futuresearch-mcp-legacy` → pulls `litellm==1.82.8` + 77 transitive deps (10:58) → `.pth` triggers on Python startup → fork bomb + credential theft |
 | **Three-Stage Malware Architecture** | Stage 1: `litellm_init.pth` one-liner spawns child with base64 payload → Stage 2: RSA-4096 public key loader → Stage 3: `B64_SCRIPT` credential harvester → `run()` encrypts with AES+RSA and POSTs to C2 |
 | **v1.82.8 Payload** | `litellm_init.pth` — .pth startup hook, runs on ANY Python interpreter start including `pip install` itself. Fork bomb bug: each `subprocess.Popen([sys.executable, ...])` child also triggers `.pth`, causing infinite recursion |
@@ -91,6 +97,11 @@ Reconstructed from the [FutureSearch discovery transcript](https://futuresearch.
 | `litellm==1.82.7` | Package version | Compromised PyPI release (proxy_server.py payload) |
 | `litellm==1.82.8` | Package version | Compromised PyPI release (.pth payload) |
 | `tpcp.tar.gz` | Filename | Encrypted exfil archive created before POST to C2 |
+| `scan.aquasecurtiy[.]org` | Domain | TeamPCP C2 for Trivy campaign (typosquat of "aquasecurity" — note deliberate misspelling) |
+| `45.148.10.212` | IP | TeamPCP C2 IP address (Trivy campaign) |
+| `plug-tab-protective-relay.trycloudflare.com` | Domain | TeamPCP C2 — Cloudflare Tunnel relay |
+| `tdtqy-oyaaa-aaaae-af2dq-cai.raw.icp0.io` | Domain | TeamPCP C2 — Internet Computer Protocol canister |
+| `trivy==0.69.4` / `0.69.5` / `0.69.6` | Software version | Compromised Trivy binary releases (same campaign) |
 
 ### References
 
@@ -103,6 +114,8 @@ Reconstructed from the [FutureSearch discovery transcript](https://futuresearch.
 | FutureSearch — Discovery Transcript | https://futuresearch.ai/blog/litellm-attack-transcript/ |
 | GitHub Issue #24512 | https://github.com/BerriAI/litellm/issues/24512 |
 | Snyk Analysis | https://snyk.io/articles/poisoned-security-scanner-backdooring-litellm/ |
+| Microsoft — Trivy Supply Chain Detection & Defense | https://www.microsoft.com/en-us/security/blog/2026/03/24/detecting-investigating-defending-against-trivy-supply-chain-compromise/ |
+| StepSecurity — Trivy Compromised a Second Time | https://www.stepsecurity.io/blog/trivy-compromised-a-second-time---malicious-v0-69-4-release |
 
 ---
 
@@ -1182,6 +1195,92 @@ DeviceFileEvents
 
 ---
 
+### Query 30 — TeamPCP Full Campaign C2 Infrastructure (DeviceNetworkEvents)
+
+**Goal:** Detect network connections to ANY TeamPCP C2 infrastructure across the entire campaign — Trivy, Checkmarx KICS, and LiteLLM compromises. This is the broadest IoC sweep; covers domains and IPs from Microsoft's attribution analysis.  
+**MITRE:** T1071.001, T1041, T1568  
+**Source:** [Microsoft Defender — Trivy Supply Chain Detection](https://www.microsoft.com/en-us/security/blog/2026/03/24/detecting-investigating-defending-against-trivy-supply-chain-compromise/)
+
+```kql
+// TeamPCP full campaign C2 infrastructure — all compromises
+let TeamPCP_C2_Domains = dynamic([
+    "models.litellm.cloud",                              // LiteLLM v1.82.8 C2
+    "checkmarx.zone",                                     // LiteLLM v1.82.7 + Checkmarx KICS C2
+    "scan.aquasecurtiy.org",                               // Trivy C2 (typosquat of aquasecurity)
+    "plug-tab-protective-relay.trycloudflare.com",         // Trivy C2 — Cloudflare Tunnel
+    "tdtqy-oyaaa-aaaae-af2dq-cai.raw.icp0.io"             // Trivy C2 — ICP canister
+]);
+let TeamPCP_C2_IPs = dynamic([
+    "45.148.10.212"                                        // Trivy C2 IP
+]);
+DeviceNetworkEvents
+| where Timestamp > ago(30d)
+| where RemoteUrl has_any (TeamPCP_C2_Domains)
+    or RemoteIP in (TeamPCP_C2_IPs)
+| project
+    Timestamp,
+    DeviceName,
+    RemoteUrl,
+    RemoteIP,
+    RemotePort,
+    InitiatingProcessFileName,
+    InitiatingProcessCommandLine,
+    ActionType
+| order by Timestamp desc
+```
+
+---
+
+### Query 31 — Compromised Trivy Versions in Software Inventory (DeviceTvmSoftwareInventory)
+
+**Goal:** Identify devices with compromised Trivy binary versions (v0.69.4, v0.69.5, v0.69.6) installed. These versions were backdoored by TeamPCP with the same credential-stealing payload used in the LiteLLM compromise. Affected organizations should treat any device running these versions as potentially compromised.  
+**MITRE:** T1195.001  
+**Source:** [Microsoft Defender — Trivy Supply Chain Detection](https://www.microsoft.com/en-us/security/blog/2026/03/24/detecting-investigating-defending-against-trivy-supply-chain-compromise/)
+
+```kql
+// Compromised Trivy versions in software inventory
+DeviceTvmSoftwareInventory
+| where SoftwareName has "trivy"
+| where SoftwareVersion in ("0.69.4", "0.69.5", "0.69.6")
+| project
+    DeviceName,
+    DeviceId,
+    SoftwareName,
+    SoftwareVersion,
+    OSPlatform
+| order by DeviceName asc
+```
+
+---
+
+### Query 32 — TeamPCP DNS Lookups Across Full Campaign (DeviceEvents)
+
+**Goal:** Detect DNS resolution attempts for all TeamPCP C2 domains. DNS queries may appear even when network connections are blocked by firewall/proxy, providing evidence of compromise even without successful C2 contact.  
+**MITRE:** T1071.001, T1568
+
+```kql
+// TeamPCP campaign DNS lookups (all compromises)
+DeviceEvents
+| where Timestamp > ago(30d)
+| where ActionType == "DnsQueryResponse"
+| where AdditionalFields has_any (
+    "models.litellm.cloud",
+    "checkmarx.zone",
+    "scan.aquasecurtiy.org",
+    "plug-tab-protective-relay.trycloudflare.com",
+    "tdtqy-oyaaa-aaaae-af2dq-cai.raw.icp0.io"
+    )
+| extend DnsQuery = tostring(parse_json(AdditionalFields).DnsQueryString)
+| project
+    Timestamp,
+    DeviceName,
+    DnsQuery,
+    AdditionalFields
+| order by Timestamp desc
+```
+
+---
+
 ## Triage Playbook
 
 If any of the above queries return positive results:
@@ -1199,7 +1298,7 @@ If any of the above queries return positive results:
 ### Investigation Steps
 
 1. **Scope impact**: Run Query 2 to find all pip activity on the affected device
-2. **Check C2 traffic**: Run Queries 5 + 6 (v1.82.8 C2) AND Queries 19 + 20 (v1.82.7 C2) to confirm exfiltration attempts
+2. **Check C2 traffic**: Run Query 30 (full TeamPCP campaign sweep) first, then Queries 5 + 6 (v1.82.8 C2) AND Queries 19 + 20 (v1.82.7 C2) to confirm exfiltration attempts
 3. **Persistence check**: Run Queries 21 + 22 to detect installed backdoors
 4. **Fork bomb evidence**: Run Query 24 — if Python process counts spiked, device was affected by the .pth bug
 5. **Credential file access**: Run Queries 11 + 26 + 29 to check what secrets were accessed
@@ -1207,12 +1306,13 @@ If any of the above queries return positive results:
 7. **Cloud credential theft**: Run Query 27 for IMDS metadata access
 8. **Timeline correlation**: Run Query 14 to trace pip install → network activity chain
 9. **Lateral movement risk**: Check if stolen credentials were used elsewhere (pivot to user-investigation or authentication-tracing skills)
+10. **Trivy exposure**: Run Query 31 to check if any devices have compromised Trivy versions (v0.69.4–v0.69.6) installed — same TeamPCP payload as LiteLLM
 
 ### Evidence Preservation
 
 - Export `DeviceProcessEvents` for affected device/timeframe
 - Capture DNS logs around the compromise window
-- Preserve network connection logs showing C2 communication to BOTH `models.litellm[.]cloud` and `checkmarx[.]zone`
+- Preserve network connection logs showing C2 communication to `models.litellm[.]cloud`, `checkmarx[.]zone`, `scan.aquasecurtiy[.]org`, `plug-tab-protective-relay.trycloudflare.com`, and `tdtqy-oyaaa-aaaae-af2dq-cai.raw.icp0.io`
 - Check for persistence artifacts: `~/.config/sysmon/` directory, systemd user services
 - If K8s: enumerate `node-setup-*` pods in `kube-system` namespace
 - Document all rotated credentials and rotation timestamps
