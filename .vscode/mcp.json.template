@@ -57,10 +57,11 @@
     // 4. KQL Search — Schema intelligence, GitHub query discovery, ASIM validation
     //    Prerequisite: GitHub PAT with public_repo scope
     //    Docs: https://www.npmjs.com/package/kql-search-mcp
+    //    Integrity: sha512-hN2vKBGC7eN0GpGCC5HUe8Jlf7Ap9ojwBSehGYY2VOnvZ12PnlsO0aEfO3leV47zL1QU4uJdrGbCzn02LQPBqw==
     "kql-search": {
       "type": "stdio",
       "command": "npx",
-      "args": ["-y", "kql-search-mcp"],
+      "args": ["-y", "kql-search-mcp@1.0.5"],
       "env": {
         "GITHUB_TOKEN": "${input:github-token}",
         "FAVORITE_REPOS": "Azure/Azure-Sentinel,microsoft/Microsoft-365-Defender-Hunting-Queries"
