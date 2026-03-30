@@ -1,0 +1,283 @@
+# SVG Dashboard Widget Manifest — App Registration Security Posture Report
+#
+# This file defines the layout and data mapping for generating an SVG dashboard
+# from a completed App Registration Security Posture report. It is consumed by
+# the shared SVG rendering skill at .github/skills/svg-dashboard/SKILL.md
+#
+# Usage:  After generating an app registration posture report, ask:
+#           "Generate an SVG dashboard from the report"
+#         Copilot will read this manifest + the report data + the skill,
+#         then produce a single SVG file in reports/app-registration-posture/.
+#
+# Customization:  Tweak rows, reorder widgets, add/remove items, change colors.
+#                 The renderer adapts to whatever is defined here.
+
+# ─── Canvas ──────────────────────────────────────────────────────────────────
+canvas:
+  width: 1400
+  height: 1100          # 5 rows, 12 widgets — within output token limits
+  background: "#0d1117"
+  padding: 30
+  row_gap: 20
+  col_gap: 20
+  font_family: "Segoe UI, Roboto, sans-serif"
+
+# ─── Color Palette ───────────────────────────────────────────────────────────
+# Aligned with SharePoint Dark Theme:
+# https://learn.microsoft.com/en-us/sharepoint/dev/design/themes-colors
+palette:
+  primary: "#409AE1"      # blue   — KPI highlights, primary data
+  secondary: "#b4a0ff"    # purple — secondary charts
+  accent: "#FFC83D"       # yellow — warnings, near-threshold
+  danger: "#EF6950"       # red    — critical findings, flagged entities
+  success: "#40C5AF"      # green  — stable, healthy metrics
+  muted: "#b2b2b2"        # gray   — labels, axis text
+  card_bg: "#161b22"      # dark card background
+  card_border: "#30363d"  # subtle border
+  text_primary: "#e6edf3"
+  text_secondary: "#b2b2b2"
+
+# ─── Score Rating Colors ────────────────────────────────────────────────────
+score_rating_colors:
+  healthy: "#40C5AF"        # green  — 0–20
+  elevated: "#FFC83D"       # yellow — 21–45
+  concerning: "#FF8C00"     # orange — 46–70
+  critical: "#EF6950"       # red    — 71–100
+
+# ─── Dimension Colors (App Permission Risk Score — 5 dimensions) ────────────
+dimension_colors:
+  perm_concentration: "#EF6950"   # red    — permission sprawl
+  owner_risk: "#FF8C00"          # orange — ownership gaps
+  credential_hygiene: "#FFC83D"  # yellow — stale/multi-cred
+  cross_tenant: "#b4a0ff"        # purple — foreign SPNs
+  active_abuse: "#409AE1"        # blue   — chain detections
+
+# ─── Risk Level Colors (consistent across tables) ───────────────────────────
+risk_level_colors:
+  critical: "#EF6950"       # 🔴
+  high: "#FF8C00"           # 🟠
+  medium: "#FFC83D"         # 🟡
+  low: "#40C5AF"            # 🟢
+  info: "#409AE1"           # 🔵
+
+# ─── Row Definitions ─────────────────────────────────────────────────────────
+# TOKEN-BUDGET LAYOUT: 5 rows, 12 widgets, ~1100px height
+# Designed for app registration posture reports with score card, dimension
+# breakdown, permission inventory, Q8 cross-reference, and recommendations.
+# Dropped: donut chart (risk distribution folded into table badges),
+#          line chart (no time-series data in this report type).
+
+rows:
+
+  # ── ROW 1: Title Bar ────────────────────────────────────────────────────────
+  - id: title-bar
+    height: 70
+    widgets:
+      - type: title-banner
+        fields:
+          title: "App Registration Security Posture Dashboard"
+          subtitle_fields:
+            - tenant_name              # e.g. "Contoso Corp (00000000-...)"
+            - lookback_period          # e.g. "30d (Q1–Q7) / 90d (Q8)"
+            - generation_date          # e.g. "2026-03-30"
+        style:
+          title_align: center
+          title_size: 26
+          subtitle_size: 13
+          accent_color: palette.primary
+
+  # ── ROW 2: Risk Score + KPI Cards ──────────────────────────────────────────
+  - id: score-and-kpis
+    height: 150
+    widgets:
+      - type: score-card
+        title: "App Permission Risk Score"
+        field: risk_score                   # e.g. 82 (0–100, higher = worse)
+        width_pct: 25
+        ranges:
+          - { min: 0,  max: 20, color: score_rating_colors.healthy,    label: "Healthy" }
+          - { min: 21, max: 45, color: score_rating_colors.elevated,   label: "Elevated" }
+          - { min: 46, max: 70, color: score_rating_colors.concerning,  label: "Concerning" }
+          - { min: 71, max: 100, color: score_rating_colors.critical,   label: "Critical" }
+        show_rating_label: true
+
+      - type: kpi-card
+        label: "Dangerous Apps"
+        field: dangerous_app_count          # from Key Metrics
+        unit: "of {total_apps} apps"
+        icon: "alert-triangle"
+        highlight_color: palette.danger
+
+      - type: kpi-card
+        label: "Critical Perms"
+        field: critical_perm_grants         # from Key Metrics (🔴 count)
+        unit: "grants"
+        icon: "shield-alert"
+        highlight_color: palette.danger
+
+      - type: kpi-card
+        label: "Ownerless"
+        field: ownerless_count              # from Key Metrics
+        unit: "apps"
+        icon: "user-x"
+        highlight_color: "#FF8C00"
+
+      - type: kpi-card
+        label: "Cross-Tenant"
+        field: cross_tenant_count           # from Key Metrics
+        unit: "SPNs"
+        icon: "globe"
+        highlight_color: palette.secondary
+
+      - type: kpi-card
+        label: "Chain Detections"
+        field: chain_detection_total        # from Key Metrics (non-pipeline critical/high)
+        unit: "critical/high"
+        icon: "link"
+        highlight_color: palette.primary
+
+  # ── ROW 3: Score Dimensions + Dangerous Apps Table ─────────────────────────
+  - id: dimensions-and-apps
+    height: 280
+    widgets:
+      - type: horizontal-bar-chart
+        title: "Risk Score Dimensions"
+        field: score_dimensions             # array of {dimension, score, max}
+        width_pct: 45
+        bar_height: 32
+        max_items: 5
+        value_suffix: "/20"
+        label_field: "dimension"
+        value_field: "score"
+        max_value: 20
+        bar_color_map:
+          "Perm Concentration": dimension_colors.perm_concentration
+          "Owner Risk": dimension_colors.owner_risk
+          "Credential Hygiene": dimension_colors.credential_hygiene
+          "Cross-Tenant Exp.": dimension_colors.cross_tenant
+          "Active Abuse Sigs": dimension_colors.active_abuse
+
+      - type: table-widget
+        title: "Highest-Risk Apps"
+        field: dangerous_apps               # array of {app, perms, risk, owner}
+        width_pct: 55
+        columns:
+          - { header: "App Name",    field: "app",   width: 30 }
+          - { header: "Dangerous Perms", field: "perms", width: 10, align: "center" }
+          - { header: "Risk",        field: "risk",  width: 15, badge: true }
+          - { header: "Owner",       field: "owner", width: 45 }
+        max_items: 6
+        sort_by: "perms desc"
+        badge_colors:
+          "🔴 Critical": risk_level_colors.critical
+          "🟠 High": risk_level_colors.high
+          "🟡 Medium": risk_level_colors.medium
+
+  # ── ROW 4: Permission Concentration + Q8 Detection Cross-Reference ────────
+  - id: perms-and-detections
+    height: 280
+    widgets:
+      - type: horizontal-bar-chart
+        title: "Permission Concentration (Top 8)"
+        field: permission_concentration     # array of {permission, app_count}
+        width_pct: 45
+        bar_height: 28
+        max_items: 8
+        value_suffix: " apps"
+        color_thresholds:
+          - { min: 5, color: palette.danger }
+          - { min: 3, color: "#FF8C00" }
+          - { min: 1, color: palette.primary }
+        label_field: "permission"
+        value_field: "app_count"
+
+      - type: table-widget
+        title: "Q8: Detection Cross-Reference"
+        field: q8_detections                # array of {app, breadth, sources, severity, disruption}
+        width_pct: 55
+        columns:
+          - { header: "App",        field: "app",        width: 30 }
+          - { header: "Breadth",    field: "breadth",    width: 12, align: "center" }
+          - { header: "Sources",    field: "sources",    width: 28 }
+          - { header: "Disruption", field: "disruption", width: 15, badge: true }
+          - { header: "Severity",   field: "severity",   width: 15, badge: true }
+        max_items: 6
+        sort_by: "breadth desc"
+        badge_colors:
+          "✅": palette.danger
+          "❌": palette.muted
+          "High": risk_level_colors.critical
+          "Medium": risk_level_colors.medium
+          "Low": risk_level_colors.low
+
+  # ── ROW 5: Assessment Banner + Recommendations ────────────────────────────
+  - id: assessment-and-recs
+    height: 200
+    widgets:
+      - type: assessment-banner
+        title: "Security Assessment"
+        field: overall_assessment            # e.g. "CRITICAL — 3 ownerless apps with confirmed compromise chains + golden ticket cross-tenant SPN"
+        width_pct: 40
+        severity_field: "level"              # "critical" | "high" | "medium" | "low" | "informational"
+        detail_field: "detail"               # 1-2 sentence supporting text
+        severity_colors:
+          critical: palette.danger
+          high: "#FF8C00"
+          medium: palette.accent
+          low: palette.success
+          informational: palette.primary
+
+      - type: recommendation-cards
+        title: "Top Recommendations"
+        field: recommendations               # array of {priority, text}
+        width_pct: 60
+        max_items: 3
+        priority_colors:
+          high: palette.danger
+          medium: palette.accent
+          low: palette.primary
+          info: palette.muted
+
+# ─── Data Source Mapping ─────────────────────────────────────────────────────
+# Maps each widget field to the report section where the data lives.
+# The SVG renderer extracts these values from the completed report markdown.
+data_sources:
+  report_file: "reports/app-registration-posture/App_Registration_Posture_Report_*.md"
+  field_mapping_notes: |
+    # Row 1 — Title
+    tenant_name: "Report header → Tenant field (e.g. 'Contoso Corp (00000000-...)')"
+    lookback_period: "Report header → KQL Lookback field"
+    generation_date: "Report header → Generated field"
+
+    # Row 2 — Score + KPIs
+    risk_score: "App Permission Risk Score Card → score value (0–100, higher = worse)"
+    dangerous_app_count: "Key Metrics → Apps with Dangerous Permissions"
+    total_apps: "Key Metrics → Apps with Graph API Permissions (used in KPI unit text)"
+    critical_perm_grants: "Key Metrics → Critical Permission Grants (🔴)"
+    ownerless_count: "Key Metrics → Ownerless Apps with Dangerous Perms"
+    cross_tenant_count: "Key Metrics → Cross-Tenant SPNs (number before parenthetical)"
+    chain_detection_total: "Key Metrics → Active Abuse Chain Detections parenthetical (non-pipeline critical/high count)"
+
+    # Row 3 — Dimensions + Dangerous Apps
+    score_dimensions: "Dimension Details table → 5 rows: {dimension: 'Perm Concentration', score: 17} etc."
+    dangerous_apps: |
+      Apps with Dangerous Permissions table → top 6 by perm count:
+        {app: 'SuspiciousApp-04', perms: 7, risk: '🔴 Critical', owner: 'Ownerless'}
+      For owner: use Owner Risk table. Show 'Ownerless' if in ownerless list, 'Cross-tenant' if no local object.
+
+    # Row 4 — Permission Concentration + Q8 Detections
+    permission_concentration: "Permission Concentration table → {permission: 'User.ReadWrite.All', app_count: 7} — top 8 by count"
+    q8_detections: |
+      Q8 Detection Summary table → top 6:
+        {app: 'SuspiciousApp-04', breadth: 3, sources: 'XDR+MCAS+AppGov', disruption: '✅', severity: 'High'}
+      Skip rows where app = '⚠️ No app entity extracted' or 'Others'.
+
+    # Row 5 — Assessment + Recommendations
+    overall_assessment: |
+      Security Assessment table → derive severity level from Overall Risk Rating:
+        🔴 Critical → level: "critical"
+        🟠 Concerning → level: "high"
+        🟡 Elevated → level: "medium"
+        ✅ Healthy → level: "low"
+      detail: Executive Summary → first 2 sentences
+    recommendations: "Recommendations section → top 3 items by severity (🔴 first): {priority: 'high', text: 'Revoke cross-tenant golden ticket SPN...'}"
