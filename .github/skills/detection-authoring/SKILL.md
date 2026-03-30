@@ -104,14 +104,14 @@ When converting a Sentinel query to custom detection format:
 2. ✅ Project the timestamp column as-is: `TimeGenerated = TimeGenerated` for Sentinel/LA tables, `Timestamp` for XDR tables. Never alias one to the other.
 3. ✅ Project the **impacted asset identifier column** — the column name must match a valid identifier from [Impacted Asset Types](#impacted-asset-types). Examples: `DeviceName = Computer` for device-focused detections, `AccountUpn = UserId` for user-focused. See [Pitfall 9](#pitfall-9-impactedassets-identifier-must-be-a-predefined-api-value).
 4. ✅ Project **event-unique columns** per table type — `DeviceId` + `ReportId` for MDE tables; `ReportId` for other XDR tables; recommended proxy `ReportId` for Sentinel tables (e.g., `ReportId = CorrelationId`). **Caveat:** proxy columns may contain empty strings for some events — acceptable but means those rows won't be individually identifiable in alert details.
-5. ✅ Add a time filter as the first `where` clause — prefer `ingestion_time() > ago(1h)` over `TimeGenerated > ago(1h)` (see tip below). **NRT exception:** For NRT rules (`schedule: "0"`), omit the time filter entirely — events are processed as they stream in, and the platform pre-filters automatically.
+5. ✅ Add a time filter as the first `where` clause — prefer `ingestion_time() > ago(1h)` over `Timestamp > ago(1h)` (see tip below). **NRT exception:** For NRT rules (`schedule: "0"`), omit the time filter entirely — events are processed as they stream in, and the platform pre-filters automatically.
 6. ✅ Remove `let` variables for NRT rules — **NRT rejects `let` entirely** (generic 400 error, undocumented). Inline all dynamic arrays directly in `where` clauses. Non-NRT rules tolerate `let`.
 7. ✅ Validate via Advanced Hunting dry-run before deployment
 8. ✅ For NRT rules: avoid `tostring()` on dynamic columns — use native string columns instead (e.g., `Properties` instead of `tostring(Properties_d)`). See [Pitfall 11](#pitfall-11-tostring-on-dynamic-columns-rejected-in-nrt-mode).
 9. ✅ For NRT rules: verify the table's ingestion lag justifies NRT. See [Pitfall 12](#pitfall-12-nrt-supported--nrt-practical--check-ingestion-lag).
 10. ✅ Count unique `{{Column}}` references across `title` AND `description` combined — **max 3 unique columns total** (shared across both fields, not per-field). Exceeding this returns `400 Bad Request`: *"Dynamic properties in alertTitle and alertDescription must not exceed 3 fields"*. See [Pitfall 14](#pitfall-14-max-3-unique-dynamic-columns-across-title--description).
 
-> **Performance tip (from MS Learn):** "Avoid filtering custom detections by using the `Timestamp` column. The data used for custom detections is prefiltered based on the detection frequency." Use `ingestion_time()` instead — it aligns with the platform's pre-filtering for better performance. For scheduled rules, match the time filter to the run frequency (`ingestion_time() > ago(1h)` for 1H rules). For NRT rules, no time filter is needed.
+> **Performance tip (from MS Learn):** "Avoid filtering custom detections by using the `Timestamp` column. The data used for custom detections is prefiltered based on the detection frequency." Use `ingestion_time()` instead — it aligns with the platform's pre-filtering for better performance. For scheduled rules, match the time filter to the run frequency (`ingestion_time() > ago(1h)` for 1H rules). For NRT rules, no time filter is needed. **⚠️ PowerShell note:** When building `queryText` containing backslashes (file paths, regex), always use single-quoted here-strings (`@'...'@`) to avoid escape sequence mangling — see [Pitfall 15](#pitfall-15-powershell-double-quoted-here-strings-mangle-kql-backslashes).
 
 ### Example Adaptation
 
@@ -717,9 +717,11 @@ Both the Graph MCP server and `az rest` lack the `CustomDetection.ReadWrite.All`
 
 The `recommendedActions` field is a `String` (not an array). Set to `null` if not needed. The portal always sets it to `null`.
 
-### Pitfall 6: Query Newlines
+### Pitfall 6: Query Newlines in JSON
 
-Use `\r\n` (CRLF) for line breaks in the `queryText` field. In PowerShell here-strings or backtick-escaped strings, use `` `r`n ``. The portal uses `\r\n` format.
+The `queryText` JSON field requires `\r\n` (CRLF) line breaks on the wire. **When using `ConvertTo-Json` on a PowerShell hashtable** (the recommended approach), this is handled automatically — multiline here-string content in the hashtable value is serialized with correct CRLF encoding. No manual newline insertion is needed.
+
+If manually constructing a raw JSON string body (not recommended), use PowerShell backtick escapes `` `r`n `` to produce CRLF in the output.
 
 ### Pitfall 7: Duplicate Name AND Title Check
 
@@ -845,6 +847,25 @@ The Graph API enforces **3 unique `{{Column}}` references** across `title` and `
 **Counting:** Reuse across fields is free (`{{A}}` in both = 1). Count distinct names, not occurrences.
 
 **Workaround:** Replace excess `{{Column}}` refs with static text, or use `customDetails` (up to 20 KVPs) to surface extra columns in the alert side panel. [Deploy-CustomDetections.ps1](Deploy-CustomDetections.ps1) validates this at manifest load time.
+
+### Pitfall 15: PowerShell Double-Quoted Here-Strings — Variable Interpolation & Escaping Traps
+
+**When building `queryText` in PowerShell, always use single-quoted here-strings (`@'...'@`), NEVER double-quoted (`@"..."@`).** Two distinct failure modes make double-quoted here-strings unreliable for KQL:
+
+**Risk 1 — `$variable` interpolation:** PowerShell double-quoted strings interpolate `$var` references. KQL uses `$left` and `$right` in join syntax and `$` as a dynamic property prefix. Inside `@"..."@`, PowerShell replaces these with empty strings (undefined variables → `$null` → empty), silently producing broken KQL with no compile-time warning.
+
+**Risk 2 — LLM/human escaping confusion (confirmed Mar 2026):** When writing KQL inside a double-quoted context, an LLM (or human) instinctively adapts backslash escaping — writing `\skills` (single backslash) instead of `\\skills` (double backslash), because most languages interpret `\\` → `\` in double-quoted strings. **PowerShell does NOT do this** (backtick `` ` `` is the escape character, not backslash), so the single `\` passes through literally to the KQL parser, which rejects `\s` as an invalid escape sequence → `400 Bad Request: "syntax errors"`.
+
+**Byte-level proof (Mar 2026):** When identical `\\skills` content is deliberately placed in both here-string types, PowerShell produces identical bytes — confirming PowerShell itself does not mangle backslashes. The difference arises from what gets *written into* the string (by the LLM or human), not from PowerShell processing it. This makes the bug extremely hard to diagnose: the query looks correct in terminal output, and the root cause is an invisible content difference between attempts.
+
+| Here-String Type | `$left` / `$right` | Backslash Content | Practical Safety |
+|-----------------|---------------------|-------------------|------------------|
+| `@'...'@` (single-quoted) | Literal `$left` ✅ | What you write is what you get | ✅ Safe — no interpretation |
+| `@"..."@` (double-quoted) | Interpolated → empty ❌ | What you write is what you get — but LLMs write different content | ❌ Fragile — two failure modes |
+
+**Rule:** For ANY `queryText`, **always use `@'...'@`**. This eliminates both `$` interpolation bugs and escaping confusion. Applies to inline PowerShell, the batch deployment script, and any LLM-generated deployment commands.
+
+**Additional validated finding:** `ingestion_time()` IS accepted by the CD API (tested and confirmed Mar 2026, despite MS Learn documentation ambiguity). The CD query validator accepts all functions that Advanced Hunting accepts for scheduled (non-NRT) rules.
 
 ---
 
