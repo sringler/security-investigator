@@ -1,0 +1,603 @@
+# Internet Exposure Analysis
+
+**Created:** 2026-03-31  
+**Platform:** Both  
+**Tables:** ExposureGraphNodes, ExposureGraphEdges, DeviceNetworkEvents, DeviceNetworkInfo  
+**Keywords:** internet exposure, public IP, customer-facing, inbound connections, RDP, SSH, firewall rules, NSG, attack surface, listening ports, exposure score, network scanning  
+**MITRE:** T1190, T1133, T1021.001, T1021.004, TA0001, TA0043  
+**Timeframe:** Last 7-30 days (configurable)  
+
+---
+
+## Overview
+
+Combines Microsoft Security Exposure Management (ExposureGraph) topology with MDE network telemetry to identify and validate internet-facing assets. The ExposureGraph provides the **theoretical** attack surface (what firewall rules allow), while DeviceNetworkEvents provides the **observed** attack surface (what connections are actually happening).
+
+### Data Source Summary
+
+| Table | Source | What It Tells You |
+|-------|--------|-------------------|
+| `ExposureGraphNodes` | Exposure Management | Which devices/IPs are flagged as customer-facing, exposure scores, public IPs |
+| `ExposureGraphEdges` | Exposure Management | Firewall/NSG rules: what ports are allowed from what CIDRs |
+| `DeviceNetworkEvents` | MDE | Actual inbound connections accepted, connection failures (probes), listening ports |
+| `DeviceNetworkInfo` | MDE | Network adapter config: public IPs, `IsConnectedToInternet` flag, network categories |
+
+### Key ActionTypes in DeviceNetworkEvents
+
+| ActionType | Meaning | Use For |
+|------------|---------|---------|
+| `InboundConnectionAccepted` | Remote IP successfully connected inbound | Confirming exposure — something is listening AND reachable |
+| `ConnectionFailed` | Connection attempt failed (RST/timeout) | Detecting scanning/probing against closed ports |
+| `ConnectionAttempt` | Outbound or inbound TCP attempt | Port probing (when LocalPort is populated with RemoteIPType=Public) |
+| `ListeningConnectionCreated` | Process opened a listening socket | Service discovery — what ports are open on each device |
+
+---
+
+## Query 1: Customer-Facing Devices (Exposure Graph)
+
+Devices flagged as internet-facing by Exposure Management, with exposure scores and public IPs.
+
+<!-- cd-metadata
+cd_ready: false
+adaptation_notes: "Posture inventory query — ExposureGraphNodes summarize/project, not suitable for row-level alerting"
+-->
+
+```kql
+// Customer-facing devices with exposure scores
+ExposureGraphNodes
+| where NodeLabel == "device"
+| extend Props = parse_json(tostring(NodeProperties.rawData))
+| extend isCustomerFacing = tobool(Props.isCustomerFacing)
+| extend publicIP = tostring(Props.publicIP)
+| extend deviceName = tostring(Props.deviceName)
+| extend osPlatform = tostring(Props.osPlatformFriendlyName)
+| extend exposureScore = tostring(Props.exposureScore)
+| extend deviceType = tostring(Props.deviceType)
+| extend onboardingStatus = tostring(Props.onboardingStatus)
+| extend riskScore = tostring(Props.riskScore)
+| where isCustomerFacing == true
+| project deviceName, publicIP, osPlatform, deviceType, exposureScore, riskScore, onboardingStatus
+| order by exposureScore desc
+```
+
+**Key fields:**
+- `isCustomerFacing`: Boolean — Exposure Management's determination of internet reachability
+- `exposureScore`: None / Low / Medium / High — composite vulnerability + configuration score
+- `publicIP`: The public IP assigned to the device (may be empty for NAT'd devices)
+
+---
+
+## Query 2: Internet-Exposed Firewall Rules (Exposure Graph)
+
+Extracts all firewall/NSG rules that allow traffic from `0.0.0.0/0` (the entire internet) to specific resources, with port and protocol details.
+
+<!-- cd-metadata
+cd_ready: false
+adaptation_notes: "Posture inventory query — ExposureGraphEdges topology, not event-driven. Use for scheduled posture snapshots, not CD alerts"
+-->
+
+```kql
+// Firewall rules allowing traffic from the internet
+ExposureGraphEdges
+| where EdgeLabel == "routes traffic to"
+| extend edgeProps = parse_json(tostring(EdgeProperties.rawData))
+| extend trafficRaw = tostring(edgeProps.allowedAffectiveTraffic)
+| where isnotempty(trafficRaw) and trafficRaw has "0.0.0.0/0"
+| extend srcIP = tostring(SourceNodeName)
+| extend tgtResource = tostring(TargetNodeName)
+| extend tgtType = TargetNodeLabel
+| project srcIP, tgtResource, tgtType, trafficRaw
+```
+
+**To parse individual port rules from the nested JSON:**
+
+```kql
+// Parsed firewall rules — one row per allowed port range
+ExposureGraphEdges
+| where EdgeLabel == "routes traffic to"
+| extend edgeProps = parse_json(tostring(EdgeProperties.rawData))
+| extend trafficStr = tostring(edgeProps.allowedAffectiveTraffic)
+| where isnotempty(trafficStr) and trafficStr has "0.0.0.0/0"
+| extend srcIP = tostring(SourceNodeName)
+| extend tgtResource = tostring(TargetNodeName)
+| extend tgtType = TargetNodeLabel
+| project srcIP, tgtResource, tgtType, trafficStr
+| extend trafficJson = parse_json(trafficStr)
+| mv-expand rule = trafficJson
+| extend destPorts = tostring(rule.destinationPortRanges)
+| extend srcCIDR = tostring(rule.sourceCidr)
+| extend protocol = case(
+    tostring(rule.protocolRanges) == '["6"]', "TCP",
+    tostring(rule.protocolRanges) == '["17"]', "UDP",
+    tostring(rule.protocolRanges) == '["1"]', "ICMP",
+    tostring(rule.protocolRanges))
+| where srcCIDR has "0.0.0.0/0"
+| project srcIP, tgtResource, tgtType, destPorts, protocol, srcCIDR
+| order by tgtResource asc
+```
+
+**Risky port filter — find resources with RDP/SSH/SMB open from internet:**
+
+```kql
+// High-risk ports exposed to the internet
+ExposureGraphEdges
+| where EdgeLabel == "routes traffic to"
+| extend edgeProps = parse_json(tostring(EdgeProperties.rawData))
+| extend trafficStr = tostring(edgeProps.allowedAffectiveTraffic)
+| where isnotempty(trafficStr) and trafficStr has "0.0.0.0/0"
+| where trafficStr has_any ("3389", "22", "445", "1433", "3306", "5432", "27017", "6379")
+| extend srcIP = tostring(SourceNodeName)
+| extend tgtResource = tostring(TargetNodeName)
+| extend tgtType = TargetNodeLabel
+| project srcIP, tgtResource, tgtType, trafficStr
+```
+
+---
+
+## Query 3: Inbound Connections Accepted — Device Ranking
+
+Confirms exposure by showing which devices are actually receiving inbound connections from public IPs, ranked by volume and source IP diversity.
+
+<!-- cd-metadata
+cd_ready: true
+schedule: "24H"
+category: "InitialAccess"
+title: "Internet-exposed device {{DeviceName}} accepted {{InboundConnections}} inbound connections"
+impactedAssets:
+  - type: device
+    identifier: deviceName
+recommendedActions: "Review NSG/firewall rules for this device. Verify that inbound services are intentionally exposed. Check if the device should be customer-facing."
+adaptation_notes: "Remove summarize — convert to row-level with per-connection rows. Add DeviceId, RemoteIP, LocalPort columns. Consider threshold filter (e.g., > 50 connections/day) to avoid noise"
+-->
+
+```kql
+// Devices receiving inbound connections from the internet
+let lookback = 7d;
+DeviceNetworkEvents
+| where Timestamp > ago(lookback)
+| where ActionType == "InboundConnectionAccepted"
+| where RemoteIPType == "Public"
+| summarize 
+    InboundConnections = count(),
+    UniqueSourceIPs = dcount(RemoteIP),
+    TargetPorts = make_set(LocalPort, 20),
+    DistinctPorts = dcount(LocalPort),
+    FirstSeen = min(Timestamp),
+    LastSeen = max(Timestamp)
+    by DeviceName
+| order by InboundConnections desc
+```
+
+---
+
+## Query 4: Inbound Connections by Port
+
+Shows which ports are receiving the most inbound traffic from the internet — identifies the highest-risk services.
+
+<!-- cd-metadata
+cd_ready: false
+adaptation_notes: "Statistical summary grouped by port — useful for posture reporting but not row-level alerting. Use Query 3 or 11 for CD-ready variants"
+-->
+
+```kql
+// Inbound accepted connections by destination port
+let lookback = 7d;
+DeviceNetworkEvents
+| where Timestamp > ago(lookback)
+| where ActionType == "InboundConnectionAccepted"
+| where RemoteIPType == "Public"
+| summarize 
+    Connections = count(),
+    UniqueSourceIPs = dcount(RemoteIP),
+    Devices = make_set(DeviceName, 10),
+    DeviceCount = dcount(DeviceName)
+    by LocalPort
+| extend Service = case(
+    LocalPort == 22, "SSH",
+    LocalPort == 80, "HTTP",
+    LocalPort == 443, "HTTPS",
+    LocalPort == 445, "SMB",
+    LocalPort == 1433, "MSSQL",
+    LocalPort == 3306, "MySQL",
+    LocalPort == 3389, "RDP",
+    LocalPort == 5432, "PostgreSQL",
+    LocalPort == 5985, "WinRM-HTTP",
+    LocalPort == 5986, "WinRM-HTTPS",
+    LocalPort == 8080, "HTTP-Alt",
+    LocalPort == 8443, "HTTPS-Alt",
+    LocalPort == 18789, "OpenClaw-GW",
+    strcat("Port-", tostring(LocalPort)))
+| order by Connections desc
+```
+
+---
+
+## Query 5: Top Inbound Attackers by Source IP
+
+Identifies the most active source IPs sending inbound connections — useful for enrichment and threat intel correlation.
+
+<!-- cd-metadata
+cd_ready: true
+schedule: "1H"
+category: "InitialAccess"
+title: "High-volume inbound attacker {{RemoteIP}} targeting {{DeviceCount}} devices"
+impactedAssets:
+  - type: device
+    identifier: deviceName
+recommendedActions: "Enrich the source IP via enrich_ips.py or TI lookup. If abuse score is high, consider blocking at NSG/firewall level. Check if connections were to risky ports (RDP, SSH, SMB)."
+adaptation_notes: "Restructure to row-level: remove summarize, project per-connection rows with RemoteIP, DeviceName, LocalPort. Add threshold (e.g., dcount(DeviceName) > 3) to detect multi-device scanners"
+-->
+
+```kql
+// Top source IPs making inbound connections
+let lookback = 7d;
+DeviceNetworkEvents
+| where Timestamp > ago(lookback)
+| where ActionType == "InboundConnectionAccepted"
+| where RemoteIPType == "Public"
+| summarize 
+    Connections = count(),
+    TargetDevices = make_set(DeviceName, 10),
+    DeviceCount = dcount(DeviceName),
+    TargetPorts = make_set(LocalPort, 10),
+    PortCount = dcount(LocalPort),
+    FirstSeen = min(Timestamp),
+    LastSeen = max(Timestamp)
+    by RemoteIP
+| order by Connections desc
+| take 25
+```
+
+---
+
+## Query 6: RDP Brute-Force Analysis
+
+Deep-dive into RDP (3389) exposure — hourly attack cadence, top attackers, and target device distribution.
+
+<!-- cd-metadata
+cd_ready: true
+schedule: "1H"
+category: "InitialAccess"
+title: "RDP brute-force activity on {{DeviceName}} from {{RemoteIP}}"
+impactedAssets:
+  - type: device
+    identifier: deviceName
+recommendedActions: "Verify RDP should be internet-exposed. Consider restricting to JIT access or VPN-only. Enrich attacker IP. Check for successful RDP logons following brute-force attempts."
+adaptation_notes: "First KQL block (hourly cadence) is statistical — not CD-ready. Second block (top attackers) needs row-level conversion: remove summarize, project per-connection rows. Add DeviceId, ReportId"
+-->
+
+```kql
+// RDP inbound — hourly attack cadence
+let lookback = 7d;
+DeviceNetworkEvents
+| where Timestamp > ago(lookback)
+| where ActionType == "InboundConnectionAccepted"
+| where RemoteIPType == "Public"
+| where LocalPort == 3389
+| summarize Connections = count() by bin(Timestamp, 1h), DeviceName
+| order by Timestamp desc
+```
+
+```kql
+// RDP inbound — top attackers (for enrichment)
+let lookback = 7d;
+DeviceNetworkEvents
+| where Timestamp > ago(lookback)
+| where ActionType == "InboundConnectionAccepted"
+| where RemoteIPType == "Public"
+| where LocalPort == 3389
+| summarize 
+    Hits = count(),
+    Devices = make_set(DeviceName, 10),
+    DeviceCount = dcount(DeviceName)
+    by RemoteIP
+| order by Hits desc
+| take 20
+```
+
+---
+
+## Query 7: Connection Failures — Scanning/Probing Detection
+
+Detects failed inbound connections — indicates port scanning or probing against closed/filtered ports.
+
+<!-- cd-metadata
+cd_ready: true
+schedule: "3H"
+category: "Discovery"
+title: "Port scanning detected — {{Failures}} failed connections on port {{LocalPort}}"
+impactedAssets:
+  - type: device
+    identifier: deviceName
+recommendedActions: "Review which ports are being probed. If high-value ports (RDP, SSH, SMB), verify firewall rules are blocking. Enrich top source IPs for threat intel."
+adaptation_notes: "Summarize by LocalPort — needs restructure to row-level per-device. Add DeviceName to group-by or convert to per-connection rows. Add threshold filter to avoid ephemeral port noise"
+-->
+
+```kql
+// Failed inbound connections — scanning detection
+let lookback = 7d;
+DeviceNetworkEvents
+| where Timestamp > ago(lookback)
+| where ActionType == "ConnectionFailed"
+| where RemoteIPType == "Public"
+| summarize 
+    Failures = count(),
+    UniqueSourceIPs = dcount(RemoteIP),
+    Devices = make_set(DeviceName, 10),
+    DeviceCount = dcount(DeviceName)
+    by LocalPort
+| where Failures > 5
+| extend Service = case(
+    LocalPort == 0, "SYN-Scan (port 0)",
+    LocalPort == 22, "SSH",
+    LocalPort == 445, "SMB",
+    LocalPort == 3389, "RDP",
+    LocalPort == 18789, "OpenClaw-GW",
+    LocalPort < 1024, strcat("Well-Known-", tostring(LocalPort)),
+    strcat("Ephemeral-", tostring(LocalPort)))
+| order by Failures desc
+```
+
+---
+
+## Query 8: Listening Ports — Service Discovery
+
+Shows what ports each device has opened for listening in the last 7 days. Focus on well-known ports (< 10000) to identify actual services vs ephemeral.
+
+<!-- cd-metadata
+cd_ready: true
+schedule: "24H"
+category: "Discovery"
+title: "New listening port {{LocalPort}} opened on {{DeviceName}}"
+impactedAssets:
+  - type: device
+    identifier: deviceName
+recommendedActions: "Verify the listening process is authorized. Check if the port is exposed to the internet via NSG/firewall. Investigate the InitiatingProcess for unexpected services."
+adaptation_notes: "Remove summarize — convert to per-event rows with DeviceName, LocalPort, InitiatingProcessFileName, InitiatingProcessCommandLine. Add DeviceId, ReportId. Filter to risky ports only for CD (22, 80, 443, 445, 3389, 8080, 18789)"
+-->
+
+```kql
+// Well-known listening ports per device
+let lookback = 7d;
+DeviceNetworkEvents
+| where Timestamp > ago(lookback)
+| where ActionType == "ListeningConnectionCreated"
+| where LocalPort > 0 and LocalPort < 10000
+| summarize 
+    Devices = make_set(DeviceName, 15),
+    DeviceCount = dcount(DeviceName),
+    Occurrences = count()
+    by LocalPort
+| extend Service = case(
+    LocalPort == 22, "SSH",
+    LocalPort == 80, "HTTP",
+    LocalPort == 139, "NetBIOS",
+    LocalPort == 443, "HTTPS",
+    LocalPort == 445, "SMB",
+    LocalPort == 2869, "SSDP/UPnP",
+    LocalPort == 3389, "RDP",
+    LocalPort == 4317, "OpenTelemetry",
+    LocalPort == 5040, "CDPUserSvc",
+    LocalPort == 5985, "WinRM-HTTP",
+    LocalPort == 6516, "Azure-MMA-6516",
+    LocalPort == 6601, "Azure-MMA-6601",
+    LocalPort == 6602, "Azure-MMA-6602",
+    LocalPort == 7680, "WUDO (Delivery Opt)",
+    LocalPort == 7768, "BeyondTrust/Other",
+    LocalPort == 8080, "HTTP-Alt",
+    LocalPort == 18789, "OpenClaw-GW",
+    strcat("Port-", tostring(LocalPort)))
+| order by DeviceCount desc, LocalPort asc
+```
+
+---
+
+## Query 9: DeviceNetworkInfo — Devices on Public Networks
+
+Lists MDE-enrolled devices that report being connected to the internet, with their public IP assignments and network category.
+
+<!-- cd-metadata
+cd_ready: false
+adaptation_notes: "DeviceNetworkInfo snapshot query — reports current state, not security events. Not suitable for CD alerting. Use for posture enrichment in other queries"
+-->
+
+```kql
+// Devices with IsConnectedToInternet = true and public network category
+DeviceNetworkInfo
+| where Timestamp > ago(1d)
+| summarize arg_max(Timestamp, *) by DeviceId
+| mv-expand Net = parse_json(ConnectedNetworks)
+| extend IsInternet = tobool(Net.IsConnectedToInternet)
+| extend NetCategory = tostring(Net.Category)
+| where IsInternet == true and NetCategory == "Public"
+| mv-expand IPset = parse_json(IPAddresses)
+| extend IPAddr = tostring(IPset.IPAddress)
+| extend IPType = tostring(IPset.AddressType)
+| project DeviceName, IPAddr, IPType, NetCategory, Timestamp
+| order by DeviceName asc
+```
+
+---
+
+## Query 10: Exposure Validation — Cross-Reference Graph Rules with Observed Traffic
+
+Joins ExposureGraph firewall rules (what's allowed) with DeviceNetworkEvents (what's observed) to find gaps — rules that allow traffic but no observed connections (unused exposure), or connections on ports not in the rule set (unexpected exposure).
+
+<!-- cd-metadata
+cd_ready: false
+adaptation_notes: "Cross-table join with let statements and leftouter join — multi-table correlation query not suitable for CD. Uses ExposureGraphNodes (static topology) + DeviceNetworkEvents. Use for scheduled posture reporting"
+-->
+
+```kql
+// Step 1: Get customer-facing devices from ExposureGraph
+let ExposedDevices = ExposureGraphNodes
+| where NodeLabel == "device"
+| extend Props = parse_json(tostring(NodeProperties.rawData))
+| where tobool(Props.isCustomerFacing) == true
+| extend deviceName = tolower(tostring(Props.deviceName))
+| extend publicIP = tostring(Props.publicIP)
+| extend exposureScore = tostring(Props.exposureScore)
+| project deviceName, publicIP, exposureScore;
+// Step 2: Get observed inbound connections
+let ObservedInbound = DeviceNetworkEvents
+| where Timestamp > ago(7d)
+| where ActionType == "InboundConnectionAccepted"
+| where RemoteIPType == "Public"
+| summarize 
+    InboundCount = count(),
+    UniqueIPs = dcount(RemoteIP),
+    Ports = make_set(LocalPort, 20)
+    by DeviceName
+| extend deviceName = tolower(DeviceName);
+// Step 3: Cross-reference — what's exposed vs what's seeing traffic
+ExposedDevices
+| join kind=leftouter ObservedInbound on deviceName
+| extend HasObservedTraffic = isnotnull(InboundCount)
+| project deviceName, publicIP, exposureScore, 
+    HasObservedTraffic, InboundCount, UniqueIPs, Ports
+| order by InboundCount desc
+```
+
+**Interpretation:**
+- `HasObservedTraffic = true` + high InboundCount → **Confirmed exposure, actively targeted**
+- `HasObservedTraffic = false` + customer-facing → **Theoretically exposed but not yet targeted** (or MDE agent not reporting)
+- Not in ExposureGraph but receiving inbound → **Shadow exposure** (missing from topology model)
+
+---
+
+## Query 11: Specific Port Exposure Hunt
+
+Template query for hunting inbound connections on a specific port — replace `<TARGET_PORT>` with the port of interest (e.g., 18789 for OpenClaw gateway).
+
+<!-- cd-metadata
+cd_ready: true
+schedule: "1H"
+category: "InitialAccess"
+title: "Inbound connection activity on monitored port {{LocalPort}} on {{DeviceName}}"
+impactedAssets:
+  - type: device
+    identifier: deviceName
+recommendedActions: "Verify whether this port should be reachable from the internet. Investigate the listening process. Enrich source IPs for threat intel. If port is OpenClaw (18789), check for Shadow AI agent installation."
+adaptation_notes: "Replace <TARGET_PORT> with specific port value. Remove summarize — convert to per-connection rows. Add DeviceId, ReportId, RemoteIP columns. Split into separate CD rules per target port for clarity"
+-->
+
+```kql
+// Hunt for inbound activity on a specific port
+let targetPort = <TARGET_PORT>;
+let lookback = 30d;
+DeviceNetworkEvents
+| where Timestamp > ago(lookback)
+| where ActionType in ("InboundConnectionAccepted", "ConnectionAttempt", "ConnectionFailed")
+| where RemoteIPType == "Public"
+| where LocalPort == targetPort
+| summarize 
+    Accepted = countif(ActionType == "InboundConnectionAccepted"),
+    Attempts = countif(ActionType == "ConnectionAttempt"),
+    Failed = countif(ActionType == "ConnectionFailed"),
+    UniqueIPs = dcount(RemoteIP),
+    TopIPs = make_set(RemoteIP, 20),
+    FirstSeen = min(Timestamp),
+    LastSeen = max(Timestamp)
+    by DeviceName
+| extend Status = case(
+    Accepted > 0, "🔴 ACCEPTING CONNECTIONS",
+    Attempts > 10, "🟠 Being Probed (likely closed)",
+    Attempts > 0, "🟡 Minor probing",
+    Failed > 0, "🔵 Connection failures only",
+    "✅ No activity")
+| order by Accepted desc, Attempts desc
+```
+
+---
+
+## Query 12: ExposureGraph Node Type Inventory
+
+Discovery query — enumerate all node types and counts in the ExposureGraph to understand your topology coverage.
+
+<!-- cd-metadata
+cd_ready: false
+adaptation_notes: "Pure inventory/discovery query — summarize count() by NodeLabel/EdgeLabel. No security event to alert on"
+-->
+
+```kql
+// ExposureGraph node type inventory
+ExposureGraphNodes
+| summarize Count = count() by NodeLabel
+| order by Count desc
+```
+
+```kql
+// ExposureGraph edge type inventory
+ExposureGraphEdges
+| summarize Count = count() by EdgeLabel
+| order by Count desc
+```
+
+---
+
+## Query 13: IP Address Nodes — Public IP Inventory
+
+Lists all public IP address nodes in the ExposureGraph with their associated categories and properties.
+
+<!-- cd-metadata
+cd_ready: false
+adaptation_notes: "ExposureGraph topology inventory — static IP listing with route-to edges. Not event-driven, not suitable for CD"
+-->
+
+```kql
+// All IP address nodes in ExposureGraph
+ExposureGraphNodes
+| where NodeLabel == "IP address"
+| extend Props = parse_json(tostring(NodeProperties.rawData))
+| extend ipAddress = tostring(Props.ipAddress)
+| extend fqdn = tostring(Props.fqdn)
+| project NodeName, ipAddress, fqdn, Categories = tostring(NodeCategories)
+| order by ipAddress asc
+```
+
+**Follow-up: what resources does each IP route traffic to?**
+
+```kql
+// IP → resource routing with traffic rules
+ExposureGraphEdges
+| where EdgeLabel == "routes traffic to"
+| where SourceNodeLabel == "IP address"
+| extend edgeProps = parse_json(tostring(EdgeProperties.rawData))
+| extend traffic = tostring(edgeProps.allowedAffectiveTraffic)
+| project 
+    SourceIP = SourceNodeName, 
+    TargetResource = TargetNodeName, 
+    TargetType = TargetNodeLabel,
+    TrafficRules = traffic
+| order by SourceIP asc
+```
+
+---
+
+## Investigation Workflow
+
+### Full Internet Exposure Assessment
+
+1. **Run Query 1** — Identify all customer-facing devices
+2. **Run Query 2** — Check what firewall rules allow from `0.0.0.0/0`
+3. **Run Query 3+4** — Confirm which devices/ports are actually receiving inbound traffic
+4. **Run Query 10** — Cross-reference: exposed devices with vs without observed traffic
+5. **Run Query 7** — Check what scanning/probing is hitting closed ports
+6. **Run Query 8** — Inventory all listening ports across the fleet
+7. **Enrich top attacker IPs** using `enrich_ips.py` from Query 5 output
+
+### Specific Port Hunt (e.g., OpenClaw 18789)
+
+1. **Run Query 11** with `targetPort = 18789`
+2. **Run Query 2** (risky port variant) — check if NSG/firewall allows 18789
+3. **Enrich source IPs** from Query 11 output
+4. Cross-reference with process-level evidence (DeviceProcessEvents for the listening service)
+
+### Key Telemetry Gaps
+
+| Gap | Impact | Workaround |
+|-----|--------|------------|
+| ExposureGraph only covers resources with Azure/GCP/AWS connectors | On-prem or unmanaged devices won't appear in topology queries | Use DeviceNetworkEvents `InboundConnectionAccepted` to detect exposure empirically |
+| `ConnectionAttempt` may not always populate for inbound probes | Missing some scanning evidence | Use `ConnectionFailed` as primary probe detection |
+| DeviceNetworkInfo `IsConnectedToInternet` is self-reported by the OS | NAT'd devices behind corporate firewalls may report true | Cross-reference with ExposureGraph `isCustomerFacing` for accurate internet reachability |
+| ExposureGraph has 30-day retention in Advanced Hunting | Can't look back further for historical topology changes | Snapshot key queries periodically for trend analysis |

@@ -732,9 +732,13 @@ All query files in `queries/` MUST use this standardized metadata header for eff
 
 **When creating new query files:** Follow this format. When updating existing files that lack these fields, add them.
 
-**Optional: cd-metadata blocks for Custom Detection queries**
+**🔴 REQUIRED: cd-metadata blocks for ALL queries in `queries/`**
 
-Query files intended for custom detection deployment should include per-query `<!-- cd-metadata -->` HTML comment blocks with structured YAML fields (schedule, category, impactedAssets, etc.). The full schema is defined in `.github/skills/detection-authoring/SKILL.md` under **CD Metadata Contract**. The **KQL Query Authoring** skill emits these blocks when it detects custom detection intent; the **Detection Authoring** skill consumes them when deploying queries.
+Every query in a `queries/` file MUST include a `<!-- cd-metadata -->` HTML comment block immediately before the KQL code block — either `cd_ready: true` with full fields, or `cd_ready: false` with `adaptation_notes` explaining why. **Read the CD Metadata Contract in `.github/skills/detection-authoring/SKILL.md`** for the full schema, valid field values, and examples.
+
+| Action | Status |
+|--------|--------|
+| Creating a query file in `queries/` without cd-metadata blocks | ❌ **PROHIBITED** |
 
 **PII-Free Standard:** All committed documents — query files (`queries/`), skill files (`.github/skills/`), and any other versioned documentation — must NEVER contain tenant-specific PII such as real workspace names, UPNs, server hostnames, subscription/tenant GUIDs, or application names from live environments. Use generic placeholders (e.g., `<YourAppName>`, `user@contoso.com`, `<WorkspaceName>`, `la-yourworkspace`). **Before creating or updating any skill or query file, perform a PII sanity check:** scan the content for real identifiers that may have been copied from live investigation output or config files, and replace them with placeholders.
 
