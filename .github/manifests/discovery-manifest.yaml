@@ -4,7 +4,7 @@
 # Slim version: title, path, domains, mitre, prompt only.
 # Use --full flag to generate the verbose manifest with tables, keywords, platform, timeframe.
 
-generated: '2026-05-26T15:23:01Z'
+generated: '2026-05-27T15:15:46Z'
 valid_domains:
 - admin
 - cloud
@@ -210,6 +210,16 @@ queries:
   - T1199
   - TA0001
   - TA0009
+- title: Defender EASM — Asset Inventory & Risk Exploration
+  path: queries/cloud/easm_asset_inventory.md
+  domains:
+  - exposure
+  - cloud
+  mitre:
+  - T1595 (Active Scanning)
+  - T1592 (Gather Victim Host Information)
+  - T1590 (Gather Victim Network Information)
+  - T1589 (Gather Victim Identity Information)
 - title: ExposureGraph Critical Assets & Attack Paths - Complete Query Library
   path: queries/cloud/exposure_graph_attack_paths.md
   domains:
