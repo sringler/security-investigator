@@ -4,7 +4,7 @@
 # Slim version: title, path, domains, mitre, prompt only.
 # Use --full flag to generate the verbose manifest with tables, keywords, platform, timeframe.
 
-generated: '2026-05-27T15:15:46Z'
+generated: '2026-05-30T20:09:20Z'
 valid_domains:
 - admin
 - cloud
@@ -788,6 +788,21 @@ queries:
   - T1055
   - T1029
   - T1573
+- title: npm Dependency Confusion Campaign Hunting — 33 Malicious Packages (May 2026)
+  path: queries/threat-intelligence/2026-05/npm_dependency_confusion.md
+  domains:
+  - endpoint
+  mitre:
+  - T1195.002
+  - T1059.007
+  - T1027
+  - T1071.001
+  - T1082
+  - T1552.001
+  - T1497
+  - T1546
+  - T1041
+  - T1070.004
 - title: Trusted Third-Party Intrusion (HPE OA / HPOM Abuse) — TTPs & Hunting
   path: queries/threat-intelligence/2026-05/trusted_third_party_intrusion.md
   domains:
