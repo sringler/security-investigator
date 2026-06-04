@@ -174,6 +174,67 @@ CloudAppEvents
 
 ---
 
+## Want the actual query text too?
+
+The same `CloudAppEvents` records carry the **full KQL body**, so you can see exactly *what* each user ran — invaluable for spotting the expensive anti-patterns (`search *`, `union withsource=* *`, wide-column scans) and coaching the people running them.
+
+The query text lives in different fields depending on the channel:
+- **Direct KQL (RecordType 379)** — `RawEventData.QueryText` holds the raw KQL (Portal Lake Explorer, Scheduled Jobs, Security Copilot, and probable-MCP all populate it).
+- **MCP tool calls (RecordType 403)** — the tool argument is in `RawEventData.InputParameters` as `{"query": "..."}`. For `query_lake` this is the KQL; for other tools it's that tool's input.
+
+```kql
+// ---- Actual KQL text per Lake query, heaviest first (last 7d) ----
+let lookback = 7d;
+let upnMap = SigninLogs
+    | where TimeGenerated >= ago(30d)
+    | summarize arg_max(TimeGenerated, UserPrincipalName) by UserId
+    | project UserId, UserPrincipalName;
+CloudAppEvents
+| where TimeGenerated >= ago(lookback)
+| where ActionType contains "Sentinel" or ActionType contains "KQL"
+| extend RawData = parse_json(tostring(RawEventData))
+| extend
+    Operation      = tostring(RawData.Operation),
+    RecordType     = toint(RawData.RecordType),
+    Interface      = tostring(RawData.Interface),
+    ToolName       = tostring(RawData.ToolName),
+    FailureReason  = tostring(RawData.FailureReason),
+    ExecDurationMs = todouble(RawData.ExecutionDuration),
+    TablesRead     = tostring(RawData.TablesRead),
+    UserId         = tostring(RawData.UserId),
+    QueryText      = tostring(RawData.QueryText),
+    InputParams    = tostring(RawData.InputParameters)
+| where Operation contains "Completed" or RecordType == 379
+| extend QuerySource = case(
+    RecordType == 403 and Interface == "IMcpToolTemplate",  "MCP (stdio)",
+    RecordType == 403 and Interface == "HttpMcpToolTemplate","MCP (HTTP)",
+    RecordType == 379 and (Interface == "InterfaceNotProvided" or isempty(Interface)), "MCP-Driven (Probable)",
+    RecordType == 379 and Interface has "msglakeexplorer",  "Portal (Lake Explorer)",
+    RecordType == 379 and Interface has "msgjobmanagement",  "Scheduled Jobs",
+    RecordType == 379 and Interface has "Medeina",           "Security Copilot",
+    RecordType == 379 and Interface has "workbook",          "Workbook/Dashboard",
+    RecordType == 379, strcat("Direct KQL (", Interface, ")"),
+    "Other")
+// 379 -> QueryText; 403 -> InputParameters.query (the tool argument)
+| extend QueryContent = iff(RecordType == 379, QueryText, tostring(parse_json(InputParams).query))
+| where isnotempty(QueryContent)
+| join kind=leftouter upnMap on UserId
+| extend Account = coalesce(UserPrincipalName, ToolName, UserId)  // ToolName fills in for unresolved MCP identities
+| project TimeGenerated, Account, QuerySource, ExecDurationMs, Tables = TablesRead,
+    Failed = isnotempty(FailureReason),
+    QueryContent = substring(QueryContent, 0, 500)   // trim; remove to see full text
+| order by ExecDurationMs desc
+| take 50
+```
+
+**Notes:**
+- **Anti-pattern hunting:** sort by `ExecDurationMs` (it's **milliseconds**, despite some UIs labeling seconds) and scan the `QueryContent` for the runaway shapes from this guide — `search *`, `union withsource=* *`, no leading `TimeGenerated` filter, or a wide payload column pulled across a long range. In practice these dominate the top of the list.
+- **`QueryContent` is trimmed to 500 chars** with `substring()` to keep the result readable — drop that line to capture the full query body (some are 2,000+ chars).
+- **Privacy note:** query bodies can embed indicators an analyst was hunting (domains, IPs, UPNs). Treat this output as sensitive and restrict who can run it.
+- **Per-user rollup of distinct queries:** swap the tail for `| summarize Queries = dcount(QueryContent), Samples = make_set(substring(QueryContent,0,200), 10), MaxDurationMs = max(ExecDurationMs) by Account | order by MaxDurationMs desc`.
+
+---
+
 ## Appendix — Reading per‑query scan stats (and their limits)
 
 Each Data Lake query result carries a `QueryResourceConsumption` block you can inspect to understand a query's footprint:
