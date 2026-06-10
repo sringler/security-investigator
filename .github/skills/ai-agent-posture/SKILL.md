@@ -271,6 +271,28 @@ Each dimension contributes 0–20 points to a maximum of 100:
 3. **Generate report** in requested output mode
 4. **Report total elapsed time**
 
+### Phase 5: Runtime Correlation (Optional)
+
+`AIAgentsInfo` describes how agents are **configured**; it does not show whether they are actually **used** or what they do at runtime. To close that gap, correlate the configuration inventory against the `CopilotActivity` table (all-surface AI activity log).
+
+**When to run:** After Phase 4, when the user wants to know which audited agents are actually active, which are dormant, or whether a flagged agent shows risky runtime behavior (jailbreaks, broad data access, autonomous tool sprawl).
+
+**How:** Join on the agent identifier — `AIAgentsInfo.AIAgentId` ↔ `CopilotActivity.AgentId`. Use the dedicated query library **`queries/cloud/copilot_activity_investigation.md`** rather than duplicating queries here:
+
+| Goal | Query in `copilot_activity_investigation.md` |
+|------|-----------------------------------------------|
+| Which configured agents are actually active (vs dormant) | Q7 — Declarative Agent Adoption |
+| What data a flagged agent's interactions accessed | Q4 — Data Accessed by Copilot |
+| What runtime tools/connectors an autonomous agent invoked | Q5 — Autonomous Agent Runtime Tool Invocations |
+| Whether Defender Runtime Protection evaluated the agent's tools | Q6 — Defender Runtime Protection Tool Evaluations |
+| Whether the agent was targeted by jailbreak / prompt injection | Q8 — Jailbreak / Prompt Injection Detection |
+
+**Two high-value correlations:**
+- **Configured-but-dormant** — agent present in `AIAgentsInfo` but absent from `CopilotActivity` Q7 results → candidate for decommissioning (reduces sprawl/attack surface).
+- **Active-and-dangerous** — agent that scored poorly in Phase 1–3 (unauthenticated, XPIA-exposed, many MCP tools) AND appears with high activity in Q7 → prioritize for remediation.
+
+> Keep this phase thin: the posture skill owns *configuration* assessment; `copilot_activity_investigation.md` owns *runtime* reconstruction. Reference, don't duplicate.
+
 ---
 
 ## Sample KQL Queries

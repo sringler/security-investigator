@@ -4,7 +4,7 @@
 # Slim version: title, path, domains, mitre, prompt only.
 # Use --full flag to generate the verbose manifest with tables, keywords, platform, timeframe.
 
-generated: '2026-05-30T20:09:20Z'
+generated: '2026-06-10T19:38:08Z'
 valid_domains:
 - admin
 - cloud
@@ -210,6 +210,23 @@ queries:
   - T1199
   - TA0001
   - TA0009
+- title: Copilot & AI Activity Investigation — Reconstructing AI Usage in IR
+  path: queries/cloud/copilot_activity_investigation.md
+  domains:
+  - cloud
+  - admin
+  - identity
+  mitre:
+  - T1078.004
+  - T1213
+  - T1530
+  - T1567.002
+  - T1114.002
+  - T1071.001
+  - T1087
+  - TA0007
+  - TA0009
+  - TA0010
 - title: Defender EASM — Asset Inventory & Risk Exploration
   path: queries/cloud/easm_asset_inventory.md
   domains:
