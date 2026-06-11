@@ -35,9 +35,21 @@ notes/memory/
 # Preview only (any direction)
 .\scripts\sync-repo-memory.ps1 -WhatIf
 .\scripts\sync-repo-memory.ps1 -Direction FromBackup -WhatIf
+
+# Also keep the GitHub Copilot CLI / app memory store in sync (machine-global)
+.\scripts\sync-repo-memory.ps1 -IncludeCopilotCli
 ```
 
 Default direction is `ToBackup` (one-way export). `FromBackup` and `Both` require `-Force` because they write into Copilot's trusted memory store.
+
+### Keeping VS Code and the GitHub Copilot CLI in sync
+
+VS Code Copilot and the GitHub Copilot CLI/app keep **separate** memory stores. Pass `-IncludeCopilotCli` to also sync the CLI store (`%USERPROFILE%\.copilot\memories\`) through the same `notes/memory/` backup hub, so both stay consistent:
+
+- `cli-repo` ← → `notes/memory/repo` (recursive — repo memory)
+- `cli-user` ← → `notes/memory/user` (top-level `*.md` only — the context-check triggers; the CLI's `repo/` and `session/` subfolders are not dragged into the user tier)
+
+`-IncludeCopilotCli` also relaxes the VS Code requirement: if no VS Code `workspaceStorage` hash matches the workspace (e.g. running from a Copilot worktree that was never opened in VS Code), the script proceeds with the CLI tiers only instead of failing. Because the CLI store is machine-global, `-Direction FromBackup`/`Both` with `-IncludeCopilotCli` will influence **every** Copilot CLI session on the machine — hence the same `-Force` gate applies.
 
 ---
 

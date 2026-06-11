@@ -27,6 +27,19 @@
     memory affects every workspace and every chat across the machine, not just this
     workspace. See SECURITY.
 
+.PARAMETER IncludeCopilotCli
+    Also sync the GitHub Copilot CLI / desktop app memory store at
+    %USERPROFILE%\.copilot\memories\ (a SEPARATE store from VS Code). Adds two tiers
+    that share the same notes\memory backup as the VS Code tiers, so the workspace
+    backup becomes a common hub keeping both engines consistent:
+      - cli-repo : %USERPROFILE%\.copilot\memories\repo\  <-> notes\memory\repo
+      - cli-user : %USERPROFILE%\.copilot\memories\ (top-level *.md only, NOT recursive
+                   so repo\ and session\ subfolders are left alone) <-> notes\memory\user
+    Off by default. The CLI store is machine-global (not workspace-hash-scoped), so on
+    FromBackup/Both it influences every Copilot CLI session on this machine. See SECURITY.
+    Can be combined with the VS Code tiers; if no VS Code workspace hash is found this
+    switch lets the script proceed with the CLI tiers alone.
+
 .PARAMETER Force
     Required for FromBackup and Both. Acknowledges that backup contents will be
     written into Copilot's trusted memory store and treated as authoritative
@@ -60,6 +73,8 @@ param(
 
     [switch]$IncludeUserMemory,
 
+    [switch]$IncludeCopilotCli,
+
     [switch]$Force,
 
     [ValidateSet('Auto', 'Stable', 'Insiders')]
@@ -76,6 +91,10 @@ if ($Direction -in 'FromBackup','Both' -and -not $Force -and -not $WhatIfPrefere
     if ($IncludeUserMemory) {
         Write-Host "With -IncludeUserMemory, notes\memory\user\ ALSO writes into GLOBAL user memory" -ForegroundColor Yellow
         Write-Host "and will influence chats in EVERY workspace on this machine." -ForegroundColor Yellow
+    }
+    if ($IncludeCopilotCli) {
+        Write-Host "With -IncludeCopilotCli, the GitHub Copilot CLI memory store (%USERPROFILE%\.copilot\" -ForegroundColor Yellow
+        Write-Host "memories\) is machine-global and will influence EVERY Copilot CLI session on this machine." -ForegroundColor Yellow
     }
     Write-Host ""
     Write-Host "Re-run with -Force to acknowledge, or -WhatIf to preview." -ForegroundColor Yellow
@@ -130,72 +149,109 @@ foreach ($v in $VariantCandidates) {
     if ($hashes.Count -gt 0) { $VariantMatches[$v] = $hashes }
 }
 
-if ($VariantMatches.Count -eq 0) {
+$VsCodeAvailable = $VariantMatches.Count -gt 0
+
+if (-not $VsCodeAvailable) {
     $searched = ($VariantCandidates | ForEach-Object { "  - " + (Join-Path $env:APPDATA "$_\User\workspaceStorage") }) -join "`n"
-    throw "Could not find a workspaceStorage hash matching $WorkspaceRoot. Searched:`n$searched`nOpen the workspace in VS Code (or VS Code Insiders) at least once, or pass -Variant explicitly."
-}
-
-if ($VariantMatches.Count -eq 1) {
-    $VsCodeVariant = @($VariantMatches.Keys)[0]
-    if ($EnvHint -and $EnvHint -ne $VsCodeVariant) {
-        Write-Warning "Script launched from $EnvHint, but workspace hash only exists for $VsCodeVariant. Using $VsCodeVariant."
-    }
-} else {
-    # Hash matches in BOTH variants
-    if ($EnvHint -and $VariantMatches.Contains($EnvHint)) {
-        $VsCodeVariant = $EnvHint
-        Write-Host "Workspace exists in both Stable and Insiders. Using $EnvHint (script launched from that variant)." -ForegroundColor Yellow
+    if ($IncludeCopilotCli) {
+        Write-Warning "No VS Code workspaceStorage hash matched $WorkspaceRoot. Searched:`n$searched`nProceeding with Copilot CLI tiers only (-IncludeCopilotCli)."
     } else {
-        Write-Host ""
-        Write-Host "Workspace hash matches in BOTH VS Code variants:" -ForegroundColor Yellow
-        foreach ($v in $VariantMatches.Keys) {
-            $h = $VariantMatches[$v] | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1
-            Write-Host "  $v : $($h.Name)  (last modified $($h.LastWriteTimeUtc.ToString('u')))" -ForegroundColor Yellow
-        }
-        Write-Host ""
-        if (-not [Environment]::UserInteractive) {
-            throw "Workspace hash matches both 'Code' and 'Code - Insiders'. Re-run with -Variant Stable or -Variant Insiders (non-interactive session, cannot prompt)."
-        }
-        Write-Host "Tip: re-run with -Variant Stable or -Variant Insiders to skip this prompt." -ForegroundColor DarkGray
-        $choice = (Read-Host "Select variant [S]table / [I]nsiders / [Q]uit").Trim().ToUpper()
-        switch -Regex ($choice) {
-            '^I' { $VsCodeVariant = 'Code - Insiders' }
-            '^S' { $VsCodeVariant = 'Code' }
-            default { Write-Host "Cancelled." -ForegroundColor DarkGray; return }
-        }
+        throw "Could not find a workspaceStorage hash matching $WorkspaceRoot. Searched:`n$searched`nOpen the workspace in VS Code (or VS Code Insiders) at least once, or pass -Variant explicitly. (Or pass -IncludeCopilotCli to sync only the Copilot CLI memory store.)"
     }
 }
 
-$WorkspaceStorageRoot = Join-Path $env:APPDATA "$VsCodeVariant\User\workspaceStorage"
-$MatchingHashes = $VariantMatches[$VsCodeVariant]
+$Tiers = @()
 
-Write-Host "VS Code variant: $VsCodeVariant" -ForegroundColor DarkGray
+if ($VsCodeAvailable) {
+    if ($VariantMatches.Count -eq 1) {
+        $VsCodeVariant = @($VariantMatches.Keys)[0]
+        if ($EnvHint -and $EnvHint -ne $VsCodeVariant) {
+            Write-Warning "Script launched from $EnvHint, but workspace hash only exists for $VsCodeVariant. Using $VsCodeVariant."
+        }
+    } else {
+        # Hash matches in BOTH variants
+        if ($EnvHint -and $VariantMatches.Contains($EnvHint)) {
+            $VsCodeVariant = $EnvHint
+            Write-Host "Workspace exists in both Stable and Insiders. Using $EnvHint (script launched from that variant)." -ForegroundColor Yellow
+        } else {
+            Write-Host ""
+            Write-Host "Workspace hash matches in BOTH VS Code variants:" -ForegroundColor Yellow
+            foreach ($v in $VariantMatches.Keys) {
+                $h = $VariantMatches[$v] | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1
+                Write-Host "  $v : $($h.Name)  (last modified $($h.LastWriteTimeUtc.ToString('u')))" -ForegroundColor Yellow
+            }
+            Write-Host ""
+            if (-not [Environment]::UserInteractive) {
+                throw "Workspace hash matches both 'Code' and 'Code - Insiders'. Re-run with -Variant Stable or -Variant Insiders (non-interactive session, cannot prompt)."
+            }
+            Write-Host "Tip: re-run with -Variant Stable or -Variant Insiders to skip this prompt." -ForegroundColor DarkGray
+            $choice = (Read-Host "Select variant [S]table / [I]nsiders / [Q]uit").Trim().ToUpper()
+            switch -Regex ($choice) {
+                '^I' { $VsCodeVariant = 'Code - Insiders' }
+                '^S' { $VsCodeVariant = 'Code' }
+                default { Write-Host "Cancelled." -ForegroundColor DarkGray; return }
+            }
+        }
+    }
 
-if ($MatchingHashes.Count -gt 1) {
-    Write-Warning "Multiple workspaceStorage hashes match this workspace folder in ${VsCodeVariant}:"
-    $MatchingHashes | ForEach-Object { Write-Warning "  - $($_.Name) (last modified $($_.LastWriteTimeUtc.ToString('u')))" }
-    Write-Warning "Using the most recently modified. Clean up stale entries in $WorkspaceStorageRoot if this is wrong."
-    $MatchedHash = $MatchingHashes | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1
-} else {
-    $MatchedHash = $MatchingHashes[0]
-}
+    $WorkspaceStorageRoot = Join-Path $env:APPDATA "$VsCodeVariant\User\workspaceStorage"
+    $MatchingHashes = $VariantMatches[$VsCodeVariant]
 
-$Tiers = @(
-    @{
+    Write-Host "VS Code variant: $VsCodeVariant" -ForegroundColor DarkGray
+
+    if ($MatchingHashes.Count -gt 1) {
+        Write-Warning "Multiple workspaceStorage hashes match this workspace folder in ${VsCodeVariant}:"
+        $MatchingHashes | ForEach-Object { Write-Warning "  - $($_.Name) (last modified $($_.LastWriteTimeUtc.ToString('u')))" }
+        Write-Warning "Using the most recently modified. Clean up stale entries in $WorkspaceStorageRoot if this is wrong."
+        $MatchedHash = $MatchingHashes | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1
+    } else {
+        $MatchedHash = $MatchingHashes[0]
+    }
+
+    $Tiers += @{
         Label   = 'repo'
         AppData = Join-Path $MatchedHash.FullName $RepoMemorySubpath
         Backup  = Join-Path $WorkspaceRoot 'notes\memory\repo'
         Scope   = "workspace ($($MatchedHash.Name))"
+        Recurse = $true
     }
-)
 
-if ($IncludeUserMemory) {
-    $Tiers += @{
-        Label   = 'user'
-        AppData = Join-Path $env:APPDATA "$VsCodeVariant\User\globalStorage\github.copilot-chat\memory-tool\memories"
-        Backup  = Join-Path $WorkspaceRoot 'notes\memory\user'
-        Scope   = 'GLOBAL (every workspace on this machine)'
+    if ($IncludeUserMemory) {
+        $Tiers += @{
+            Label   = 'user'
+            AppData = Join-Path $env:APPDATA "$VsCodeVariant\User\globalStorage\github.copilot-chat\memory-tool\memories"
+            Backup  = Join-Path $WorkspaceRoot 'notes\memory\user'
+            Scope   = 'GLOBAL (every workspace on this machine)'
+            Recurse = $true
+        }
     }
+}
+
+if ($IncludeCopilotCli) {
+    # GitHub Copilot CLI / desktop app keeps a SEPARATE, machine-global memory store.
+    # Both CLI tiers share the same notes\memory backup as the VS Code tiers, so the
+    # backup acts as a common hub that keeps VS Code and the Copilot CLI consistent.
+    $CliRoot = Join-Path $env:USERPROFILE '.copilot\memories'
+    $Tiers += @{
+        Label   = 'cli-repo'
+        AppData = Join-Path $CliRoot 'repo'
+        Backup  = Join-Path $WorkspaceRoot 'notes\memory\repo'
+        Scope   = 'Copilot CLI (this machine, repo memory)'
+        Recurse = $true
+    }
+    # Non-recursive: only top-level *.md (the context-check triggers). This avoids
+    # dragging the repo\ and session\ subfolders of the CLI store into the user tier.
+    $Tiers += @{
+        Label   = 'cli-user'
+        AppData = $CliRoot
+        Backup  = Join-Path $WorkspaceRoot 'notes\memory\user'
+        Scope   = 'Copilot CLI GLOBAL user memory (this machine)'
+        Recurse = $false
+    }
+}
+
+if ($Tiers.Count -eq 0) {
+    throw "No tiers selected to sync."
 }
 
 Write-Host "Direction      : $Direction" -ForegroundColor Cyan
@@ -265,12 +321,14 @@ function Sync-Tier {
         [string]$TierLabel,
         [string]$AppDataPath,
         [string]$BackupPath,
-        [string]$Scope
+        [string]$Scope,
+        [bool]$Recurse = $true
     )
 
     Write-Host "===== Tier: $TierLabel ($Scope) =====" -ForegroundColor Cyan
     Write-Host "  AppData : $AppDataPath" -ForegroundColor DarkGray
     Write-Host "  Backup  : $BackupPath" -ForegroundColor DarkGray
+    if (-not $Recurse) { Write-Host "  (top-level files only - not recursive)" -ForegroundColor DarkGray }
 
     if (-not (Test-Path $AppDataPath)) {
         Write-Warning "  AppData folder does not exist yet: $AppDataPath"
@@ -292,10 +350,12 @@ function Sync-Tier {
     $AppDataFull = if (Test-Path $AppDataPath) { (Resolve-Path $AppDataPath).Path } else { $AppDataPath }
     $BackupFull  = if (Test-Path $BackupPath)  { (Resolve-Path $BackupPath).Path }  else { $BackupPath }
 
+    $RecurseArgs = if ($Recurse) { @{ Recurse = $true } } else { @{} }
+
     if ($Direction -in 'Both','ToBackup') {
         Write-Host "  AppData -> Backup:" -ForegroundColor Yellow
         $found = 0
-        Get-ChildItem $AppDataFull -File -Recurse -ErrorAction SilentlyContinue | ForEach-Object {
+        Get-ChildItem -Path $AppDataFull -File @RecurseArgs -ErrorAction SilentlyContinue | ForEach-Object {
             $found++
             if (Test-Excluded $_.Name) {
                 Write-Host "    [skip] $($_.Name) (doc/excluded)" -ForegroundColor DarkGray
@@ -312,7 +372,7 @@ function Sync-Tier {
     if ($Direction -in 'Both','FromBackup') {
         Write-Host "  Backup -> AppData:" -ForegroundColor Yellow
         $found = 0
-        Get-ChildItem $BackupFull -File -Recurse -ErrorAction SilentlyContinue | ForEach-Object {
+        Get-ChildItem -Path $BackupFull -File @RecurseArgs -ErrorAction SilentlyContinue | ForEach-Object {
             $found++
             if (Test-Excluded $_.Name) {
                 Write-Host "    [skip] $($_.Name) (doc/excluded)" -ForegroundColor DarkGray
@@ -329,7 +389,8 @@ function Sync-Tier {
 }
 
 foreach ($tier in $Tiers) {
-    Sync-Tier -TierLabel $tier.Label -AppDataPath $tier.AppData -BackupPath $tier.Backup -Scope $tier.Scope
+    $tierRecurse = if ($tier.ContainsKey('Recurse')) { [bool]$tier.Recurse } else { $true }
+    Sync-Tier -TierLabel $tier.Label -AppDataPath $tier.AppData -BackupPath $tier.Backup -Scope $tier.Scope -Recurse $tierRecurse
 }
 
 Write-Host "Done. Copied: $($Stats.Copied)  Skipped: $($Stats.Skipped)  Excluded: $($Stats.Excluded)  Blocked: $($Stats.Blocked)  Errors: $($Stats.Errors)" -ForegroundColor Cyan
