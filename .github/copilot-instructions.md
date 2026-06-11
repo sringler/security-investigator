@@ -603,17 +603,21 @@ Direct Azure Resource Manager and Azure Monitor integration for quick ad-hoc que
 
 - **Documentation**: https://learn.microsoft.com/en-us/azure/developer/azure-mcp-server/overview
 
-### Sentinel Exposure Graph MCP
+### Sentinel Exposure Graph Tools (bundled in Sentinel Data Lake MCP)
 Attack surface analysis tools for the Microsoft Security Exposure Management graph. **More effective than raw KQL** for per-asset attack path scenarios — use these first, fall back to KQL for fleet-wide sweeps.
 
-> **⚠️ Preview:** The Sentinel Exposure Graph MCP server is in preview and may not be available in all environments. If the tools are not present (tool calls fail or are not listed), fall back to KQL queries against `ExposureGraphNodes` / `ExposureGraphEdges` in Advanced Hunting. See `queries/cloud/exposure_graph_attack_paths.md` for equivalent KQL patterns.
+> **Bundled in the Sentinel Data Lake MCP** (`data-exploration` server) alongside `query_lake`. Tool names have **no `graph_` prefix** (e.g., `find_blastradius`). The standalone `sentinel-graph-mcp` (`/mcp/graph`) server is redundant.
 
-- **`mcp_sentinel-grap_graph_find_blastradius`**: All downstream targets reachable from a source asset. Params: `sourceName`
-- **`mcp_sentinel-grap_graph_exposure_perimeter`**: Inbound perimeter — externally-reachable nodes with walkable paths TO a target. Params: `targetName`
+- **`find_blastradius`**: All downstream targets reachable from a source asset. Params: `sourceName`
+- **`find_exposure_perimeter`**: Inbound perimeter — externally-reachable nodes with walkable paths TO a target. Params: `targetName`
   - **Known limitation:** May return empty for assets that ARE network-reachable but lack formal ExposureGraph perimeter classification. Fall back to KQL edge analysis with `EdgeLabel == "routes traffic to"` when empty.
-- **`mcp_sentinel-grap_graph_find_walkable_paths`**: Full path between source and target with RBAC role detail, `isOverProvisioned` and `isIdentityInactive` flags. Params: `sourceName`, `targetName`
-- **`mcp_sentinel-grap_graph_find_connected_nodes`**: All nodes of a specific type within N hops. Params: `sourceName`, `sourceNodeLabel`, `targetNodeLabel`, `maxHops` (1–3 recommended; higher = very large results)
-- **`mcp_sentinel-grap_graph_get_context`**: Full graph schema (node/edge types). Params: `GraphName` (always `SystemScenarioEKGGraph`)
+- **`find_walkable_paths`**: Full path between source and target (up to 4 hops) with RBAC role detail, `isOverProvisioned` and `isIdentityInactive` flags. Params: `sourceName`, `targetName`
+- **`find_connected_nodes`**: Find pairs of graph nodes connected by walkable edges, filtered by source/target node labels and properties. Params: `sourceNodeLabel`, `targetNodeLabel` (plus optional `sourceNodeProperties`, `targetNodeProperties`, `resultsCountLimit`)
+- **`find_nodes`**: Locate graph nodes matching label/property criteria.
+- **`get_graph_context`**: Full graph schema (node/edge types). Call before `find_connected_nodes` to validate labels/properties.
+- **`analyze_user_entity` / `analyze_url_entity` / `analyze_application_entity`**: Entity-level analysis for users, URLs, and app registrations.
+
+> **⚠️ Large results:** `find_blastradius` on a privileged identity can return 100+ walkable paths (100KB+). The MCP writes oversized results to a session file — parse the JSON with PowerShell rather than reading it inline.
 
 **Workflow:** blast radius → exposure perimeter → walkable paths for specific targets → connected nodes by type → KQL for fleet-wide analysis
 

@@ -7,7 +7,7 @@
   // The 3 MCP Apps (visualization) require building first — see README.
   //
   // Authentication:
-  //   - Sentinel Data Lake, Graph, Triage, Graph-Explorer: Browser-based Azure AD login
+  //   - Sentinel Data Lake, Graph, Triage: Browser-based Azure AD login
   //   - KQL Search: GitHub PAT with public_repo scope
   //   - Microsoft Learn: No authentication required
   // ============================================================
@@ -31,6 +31,10 @@
     // ── Required MCP Servers (5) ────────────────────────────────
 
     // 1. Sentinel Data Lake — KQL queries against Log Analytics workspace
+    //    Also bundles the Exposure Graph tools (find_blastradius, find_exposure_perimeter,
+    //    find_walkable_paths, find_connected_nodes, find_nodes, get_graph_context) and entity
+    //    analysis tools (analyze_user_entity, analyze_url_entity, analyze_application_entity).
+    //    Note: bundled graph tools drop the legacy `graph_` prefix (e.g., find_blastradius).
     //    Permissions: Log Analytics Reader (minimum), Sentinel Reader (recommended)
     //    Docs: https://learn.microsoft.com/en-us/copilot/security/developer/mcp-get-started
     "sentinel-data-mcp": {
@@ -73,14 +77,6 @@
     "microsoft-learn": {
       "type": "http",
       "url": "https://learn.microsoft.com/api/mcp"
-    },
-
-    // ── Additional Platform Servers ─────────────────────────────
-
-    // Sentinel Graph — Entity graph exploration and relationship queries
-    "sentinel-graph-mcp": {
-      "type": "http",
-      "url": "https://sentinel.microsoft.com/mcp/graph"
     },
 
     // ── MCP Apps: Local Custom Servers ────────────────────────

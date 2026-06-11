@@ -92,7 +92,7 @@ copy .vscode\mcp.json.template .vscode\mcp.json
 
 **Key Components:**
 - **25 Agent Skills** — Modular investigation workflows for incidents, users, devices, IoCs, authentication, scope drift (SPN/User/Device), MCP monitoring, exposure management, AI agent posture, app registration posture, identity posture, data security analysis, email threat posture, MITRE ATT&CK coverage, ingestion analysis, detection authoring, threat pulse scanning, SVG dashboards, and more
-- **7 MCP Server Integrations** — Sentinel Data Lake, Graph API, Defender XDR Triage, KQL Search, Microsoft Learn, Azure MCP Server, Sentinel Graph (private preview)
+- **6 MCP Server Integrations** — Sentinel Data Lake (incl. Exposure Graph tools), Graph API, Defender XDR Triage, KQL Search, Microsoft Learn, Azure MCP Server
 - **3 Local MCP Apps** — Interactive heatmaps, geographic attack maps, incident commenting
 - **Python Utilities** — HTML report generation with IP enrichment (geolocation, VPN detection, abuse scores, Shodan port/service/CVE intelligence)
 
@@ -426,7 +426,7 @@ copy .vscode/mcp.json.template .vscode/mcp.json
 ```
 
 The template includes inline documentation for each server. On first use, VS Code will prompt for:
-- **Entra ID login** — browser-based auth for Sentinel Data Lake, Graph, Triage, and Sentinel Graph servers
+- **Entra ID login** — browser-based auth for Sentinel Data Lake, Graph, and Triage servers
 - **[GitHub PAT](https://github.com/settings/tokens/new)** — for KQL Search MCP (schema intelligence and query discovery). Needs `public_repo` scope.
 
 See [MCP Server Setup](#-mcp-server-setup) below for per-server permissions and installation guides.
@@ -510,13 +510,14 @@ The system uses several Model Context Protocol (MCP) servers. All are **pre-conf
 | 4 | **KQL Search** | `npx -y kql-search-mcp` (stdio) | [Setup](https://www.npmjs.com/package/kql-search-mcp) | [GitHub PAT](https://github.com/settings/tokens/new) (`public_repo`) |
 | 5 | **Microsoft Learn** | `https://learn.microsoft.com/api/mcp` | [Setup](https://github.com/MicrosoftDocs/mcp) | None (free) |
 | 6 | **Azure MCP Server** | VS Code extension (stdio) | [Setup](https://learn.microsoft.com/en-us/azure/developer/azure-mcp-server/overview) | Contributor or Reader on subscription |
-| 7 | **Sentinel Graph** ⚠️ | `https://sentinel.microsoft.com/mcp/graph` | [Blog](https://techcommunity.microsoft.com/blog/microsoft-security-blog/uncover-hidden-security-risks-with-microsoft-sentinel-graph/4469437) | Sentinel Reader — *Private Preview* |
 
 ### 1. Microsoft Sentinel MCP Server
 
 **📖 [Installation Guide](https://learn.microsoft.com/en-us/copilot/security/developer/mcp-get-started)**
 
 **Tools:** `query_lake`, `search_tables`, `list_sentinel_workspaces`
+
+**Exposure Graph tools (bundled here):** `find_blastradius`, `find_exposure_perimeter`, `find_walkable_paths`, `find_connected_nodes`, `find_nodes`, `get_graph_context`, plus entity analysis (`analyze_user_entity`, `analyze_url_entity`, `analyze_application_entity`). These ship in the Data Lake server with no `graph_` prefix.
 
 **Permissions:**
 - **Log Analytics Reader** (minimum) — query workspace data
@@ -596,17 +597,6 @@ Install via VS Code extension: search "Azure MCP Server" in Extensions, or insta
 - **Contributor** — for write/modify operations (optional)
 
 **Configuration:** Requires `azure_mcp` parameters in `config.json` (tenant, subscription, resource group, workspace name) to avoid cross-tenant auth errors. See [Configure Environment](#2-configure-environment).
-
-### 7. Sentinel Graph MCP Server ⚠️ Private Preview
-
-> **Note:** Sentinel Graph is currently in **private preview** and not available to all customers. If your tenant does not have access, this server will fail to connect — you can safely remove it from `.vscode/mcp.json`. See the [announcement blog post](https://techcommunity.microsoft.com/blog/microsoft-security-blog/uncover-hidden-security-risks-with-microsoft-sentinel-graph/4469437) for details and enrollment.
-
-**Tools:** Entity graph exploration and relationship queries.
-
-**Permissions:**
-- **Sentinel Reader** (minimum)
-
-Pre-configured in `.vscode/mcp.json.template`. Browser-based Entra ID login on first use.
 
 ### Verify Setup
 
