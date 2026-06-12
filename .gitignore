@@ -66,3 +66,7 @@ mcp-apps/**/dist/
 
 # Prompt files
 prompts/
+
+# Local agent instructions (personal, never publish)
+AGENTS.md
+CLAUDE.md
