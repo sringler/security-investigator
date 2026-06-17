@@ -528,4 +528,5 @@ DataSecurityEvents
 - **`ai-agent-posture` skill** — static configuration audit of declarative agents (`AgentsInfo`); see its Phase 5 for runtime correlation back to this file.
 - **`data-security-analysis` skill** — deep DLP / sensitive-information-type / sensitivity-label analysis over `DataSecurityEvents` (the table behind Q13).
 - **`agent365_observability.md`** — deeper agentic tool-call telemetry (`UnifiedAgentObservability`, Data Lake only).
+- **[`../network/gsa_generative_ai_insights.md`](../network/gsa_generative_ai_insights.md)** — network-layer AI view via Global Secure Access: consumer GenAI prompts (ChatGPT/Gemini) with allow/block verdicts, plus agent MCP egress incl. shadow/unsanctioned MCP servers. Complements this application-layer table.
 - **`security_copilot_utilization.md`** — Security-Copilot-specific utilization via `CloudAppEvents`.

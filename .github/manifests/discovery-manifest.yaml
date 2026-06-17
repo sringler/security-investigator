@@ -4,7 +4,7 @@
 # Slim version: title, path, domains, mitre, prompt only.
 # Use --full flag to generate the verbose manifest with tables, keywords, platform, timeframe.
 
-generated: '2026-06-15T17:57:19Z'
+generated: '2026-06-17T18:04:02Z'
 valid_domains:
 - admin
 - cloud
@@ -566,6 +566,21 @@ queries:
   - TA0040
   - TA0042
   - TA0043
+- title: Global Secure Access — Generative AI Insights (Client GenAI + Agent MCP)
+  path: queries/network/gsa_generative_ai_insights.md
+  domains:
+  - cloud
+  - identity
+  mitre:
+  - T1071.001
+  - T1567.002
+  - T1078.004
+  - T1530
+  - T1213
+  - TA0001
+  - TA0009
+  - TA0010
+  - TA0011
 - title: Internet Exposure Analysis
   path: queries/network/internet_exposure_analysis.md
   domains:

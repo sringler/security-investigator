@@ -52,8 +52,15 @@ def extract_table_from_kql(lines: list, start_idx: int) -> str:
             for m in matches:
                 if m not in ("TimeGenerated", "Timestamp", "IsInternetFacing", "DeviceName",
                              "AccountName", "RemoteIP", "SourceIP", "True", "False",
-                             "LogonType", "EventID", "ActionType", "ResultType"):
+                             "LogonType", "EventID", "ActionType", "ResultType",
+                             "SubActivity", "Activity"):
                     tables.add(m)
+            # Explicit table allowlist for tables the suffix regex misses
+            # (e.g. GSA tables ending in Insights/Traffic/Sessions, which are
+            # too ambiguous to match generically without false positives).
+            for kt in ("NetworkAccessGenerativeAIInsights", "NetworkAccessTraffic", "NetworkSessions"):
+                if re.search(rf'\b{kt}\b', line):
+                    tables.add(kt)
             # Custom Log Analytics tables (`*_CL`)
             for m in re.findall(r'\b([A-Za-z][A-Za-z0-9]*_CL)\b', line):
                 tables.add(m)
