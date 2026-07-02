@@ -4,7 +4,7 @@
 # Slim version: title, path, domains, mitre, prompt only.
 # Use --full flag to generate the verbose manifest with tables, keywords, platform, timeframe.
 
-generated: '2026-06-24T17:51:57Z'
+generated: '2026-07-02T20:36:23Z'
 valid_domains:
 - admin
 - cloud
@@ -329,6 +329,12 @@ queries:
   - admin
   mitre:
   - TA0043
+- title: Sentinel Ingestion Breakdown — CommonSecurityLog & Syslog (Split-Rule Targeting)
+  path: queries/cloud/sentinel_ingestion_split_rule_targeting.md
+  domains:
+  - cloud
+  mitre:
+  - N/A (cost & ingestion optimization)
 - title: Email Threat Detection & Investigation Queries
   path: queries/email/email_threat_detection.md
   domains:
